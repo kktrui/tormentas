@@ -7,6 +7,7 @@ a tu posición. Una sola página HTML, sin servidor ni claves.
 - Mapa base: Esri World Dark Gray.
 - Rumbo: correlación entre los últimos 5 fotogramas en una ventana de ~950 km alrededor de la posición.
 - ETA: extrapolación lineal del último fotograma a lo largo del vector; umbrales 15/35/45 dBZ aproximados.
+- Rayos: flujo en tiempo real de Blitzortung.org (protocolo no oficial; cruces que se desvanecen en 30 min).
 - La posición se guarda en el navegador (GPS o toque en el mapa).
 
 Uso personal. Las fuentes tienen cuotas pensadas para uso no comercial.

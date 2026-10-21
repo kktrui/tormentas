@@ -54,6 +54,12 @@ button.icon{flex:0 0 auto;padding:8px 12px}
 .legend i{display:inline-block;width:28px;height:8px;border-radius:2px}
 .leaflet-tooltip.tt{background:var(--panel);color:var(--fg);border:1px solid var(--line);font-size:11px;padding:2px 6px}
 .leaflet-tooltip.tt::before{display:none}
+.bolt{background:transparent;border:0;pointer-events:none}
+.bolt svg{display:block;filter:drop-shadow(0 0 2px rgba(0,0,0,.9))}
+#boltline{display:none;align-items:center;gap:8px;font-size:13.5px;color:var(--fg);padding:6px 10px;border:1px solid rgba(255,241,118,.35);border-radius:10px;background:rgba(255,241,118,.07)}
+#boltline.on{display:flex}
+#boltline b{font-variant-numeric:tabular-nums}
+#boltline small{color:var(--muted);margin-left:auto;white-space:nowrap}
 .leaflet-marker-icon.home{background:transparent;border:0}
 .home svg{filter:drop-shadow(0 1px 2px rgba(0,0,0,.7))}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
@@ -73,6 +79,7 @@ button.icon{flex:0 0 auto;padding:8px 12px}
       <p id="sub">Descargando los últimos fotogramas de RainViewer.</p>
     </div>
   </div>
+  <div id="boltline" aria-live="polite"><span>⚡</span><span><b id="boltN">0</b> <span id="boltWord">rayos</span> en 15 min a menos de <b id="boltKm">50</b> km</span><small id="boltAge"></small></div>
   <div class="grid">
     <div class="cell"><small>Lluvia</small><b id="eLight">—</b></div>
     <div class="cell"><small>Fuerte</small><b id="eStrong">—</b></div>
@@ -105,6 +112,9 @@ const CFG = {
   refreshMs: 5 * 60e3,
   minRainPx: 150,        // píxeles con lluvia mínimos para fiarse del vector
   nearKm: 300,           // solo se marca célula principal si está más cerca que esto o si te alcanza
+  boltKeepMin: 30,       // los rayos se muestran durante estos minutos
+  boltRangeKm: 600,      // solo se guardan rayos a menos de esta distancia de la posición
+  boltNearKm: 50,        // radio del contador de rayos cercanos
   sigmaKm: 180,          // peso gaussiano alrededor de la posición al correlar
 };
 const DEFAULT_POS = { lat: 39.5696, lng: 2.6502, name: 'Palma (por defecto)' };
@@ -122,7 +132,7 @@ function savePos(){ try{ localStorage.setItem('tormentas.pos', JSON.stringify(S.
 const map = L.map('map', { zoomControl:false, attributionControl:true, worldCopyJump:false }).setView([S.pos.lat, S.pos.lng], 8);
 L.control.zoom({ position:'topright' }).addTo(map);
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-  maxNativeZoom:16, maxZoom:18, attribution:'Mapa © Esri · radar © RainViewer'
+  maxNativeZoom:16, maxZoom:18, attribution:'Mapa © Esri · radar © RainViewer · rayos © Blitzortung.org'
 }).addTo(map);
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
   maxNativeZoom:16, maxZoom:18, opacity:.8, zIndex:8, pane:'overlayPane'
@@ -133,7 +143,7 @@ let homeMarker = L.marker([S.pos.lat,S.pos.lng], { icon:homeIcon, keyboard:false
 let homeCircle = L.circle([S.pos.lat,S.pos.lng], { radius:CFG.radiusKm*1000, color:'#ffb000', weight:1, fill:false, dashArray:'4 4', interactive:false }).addTo(map);
 map.on('click', e => { if(!S.picking) return; S.picking=false; $('pick').classList.remove('active'); setPos({lat:e.latlng.lat, lng:e.latlng.lng, name:'Punto fijado'}); });
 
-function setPos(p){ S.pos=p; savePos(); homeMarker.setLatLng([p.lat,p.lng]); homeCircle.setLatLng([p.lat,p.lng]); map.panTo([p.lat,p.lng]); toast('Posición: '+p.name); analyze(); }
+function setPos(p){ S.pos=p; savePos(); homeMarker.setLatLng([p.lat,p.lng]); homeCircle.setLatLng([p.lat,p.lng]); map.panTo([p.lat,p.lng]); toast('Posición: '+p.name); analyze(); if(typeof boltRecenter==='function') boltRecenter(); }
 
 // ---------- Fotogramas ----------
 async function fetchFrames(){
@@ -334,6 +344,7 @@ function render(r){
     if(r.conf==='baja') sub+=' Tormentas de formación local: fíate más de la animación que del número.';
   }
   $('headline').textContent=head; $('sub').textContent=sub; $('dot').className='dot '+cls;
+  if(typeof boltRender==='function') boltRender(true);
   $('eLight').textContent = r.v?fmtMin(adj(r.eta.light)):'—';
   $('eStrong').textContent = r.v?fmtMin(adj(r.eta.strong)):'—';
   $('eSevere').textContent = r.v?fmtMin(adj(r.eta.severe)):'—';
@@ -362,6 +373,56 @@ function draw(r, dtMin){
   L.circleMarker(at(dtMin),{radius:4,color:'#ffb000',fillColor:'#ffb000',fillOpacity:1,weight:1,interactive:false}).addTo(overlays);
 }
 
+// ---------- Rayos (Blitzortung, tiempo real) ----------
+// Flujo público de Blitzortung.org (uso personal, no comercial). Protocolo no oficial: si cambia, la capa se apaga sola.
+const bolts=L.layerGroup().addTo(map);
+const B={ list:[], ws:null, hosts:['ws1','ws7','ws8'], hi:0, retry:0, timer:null };
+function lzwDecode(b){ const e={}, d=b.split(''), c0=d[0]; let c=c0, f=c0, h=256, o=h, a; const g=[c0];
+  for(let i=1;i<d.length;i++){ const code=d[i].charCodeAt(0); a=h>code?d[i]:(e[code]?e[code]:f+c); g.push(a); c=a.charAt(0); e[o]=f+c; o++; f=a; } return g.join(''); }
+function kmBetween(lat1,lon1,lat2,lon2){ const R=6371, dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2; return 2*R*Math.asin(Math.sqrt(a)); }
+function boltIcon(ageMin){
+  const col = ageMin<5?'#fff9c4' : ageMin<15?'#ffe082' : '#b8a860';
+  const op  = Math.max(0.15, 1-ageMin/CFG.boltKeepMin);
+  return L.divIcon({ className:'bolt', iconSize:[12,12], iconAnchor:[6,6],
+    html:`<svg width="12" height="12" viewBox="0 0 12 12" style="opacity:${op.toFixed(2)}"><path d="M1.5 1.5L10.5 10.5M10.5 1.5L1.5 10.5" stroke="${col}" stroke-width="2.2" stroke-linecap="round"/></svg>` });
+}
+function boltConnect(){
+  if(B.ws && (B.ws.readyState===0 || B.ws.readyState===1)) return;
+  const host=B.hosts[B.hi++ % B.hosts.length];
+  let ws; try{ ws=new WebSocket(`wss://${host}.blitzortung.org:443/`); }catch(e){ return boltSchedule(); }
+  B.ws=ws;
+  ws.onopen=()=>{ B.retry=0; ws.send(JSON.stringify({a:111})); };
+  ws.onmessage=m=>{ let j; try{ j=JSON.parse(lzwDecode(m.data)); }catch(e){ return; }
+    if(typeof j.lat!=='number'||typeof j.lon!=='number') return;
+    const t=j.time>1e15 ? j.time/1e6 : j.time*1000; // ns → ms
+    const d=kmBetween(S.pos.lat,S.pos.lng,j.lat,j.lon); if(d>CFG.boltRangeKm) return;
+    const mk=L.marker([j.lat,j.lon],{icon:boltIcon(0),interactive:false,keyboard:false}).addTo(bolts);
+    B.list.push({t, lat:j.lat, lon:j.lon, d, mk}); if(B.list.length>1500){ const old=B.list.shift(); bolts.removeLayer(old.mk); }
+    boltRender(); };
+  ws.onclose=()=>{ B.ws=null; boltSchedule(); };
+  ws.onerror=()=>{ try{ws.close();}catch(e){} };
+}
+function boltSchedule(){ clearTimeout(B.timer); const wait=Math.min(60e3, 2000*2**Math.min(B.retry++,5)); B.timer=setTimeout(boltConnect, wait); }
+let boltRenderT=0;
+function boltRender(force){
+  const now=Date.now(); if(!force && now-boltRenderT<2000) return; boltRenderT=now;
+  const keepMs=CFG.boltKeepMin*60e3; let near=0, last=null;
+  B.list=B.list.filter(b=>{ const age=(now-b.t)/60e3; if(age>CFG.boltKeepMin){ bolts.removeLayer(b.mk); return false; }
+    b.mk.setIcon(boltIcon(age)); if(b.d<=CFG.boltNearKm && age<=15){ near++; if(!last||b.t>last) last=b.t; } return true; });
+  const line=$('boltline'); const any=B.list.some(b=>b.d<=150);
+  line.classList.toggle('on', any||near>0);
+  $('boltN').textContent=near; $('boltWord').textContent=near===1?'rayo':'rayos'; $('boltKm').textContent=CFG.boltNearKm;
+  $('boltAge').textContent = last ? `último hace ${Math.max(0,Math.round((now-last)/60e3))} min` : (any ? `rayos a <150 km` : '');
+  const dot=$('dot'); if(near>=3){ dot.className='dot bad'; } 
+}
+function boltRecenter(){ // al cambiar de posición, recalcular distancias y descartar los lejanos
+  B.list=B.list.filter(b=>{ b.d=kmBetween(S.pos.lat,S.pos.lng,b.lat,b.lon); if(b.d>CFG.boltRangeKm){ bolts.removeLayer(b.mk); return false; } return true; });
+  boltRender(true);
+}
+setInterval(()=>boltRender(true), 30e3);
+boltConnect();
+
 // ---------- Botones ----------
 $('gps').onclick=()=>{
   if(!navigator.geolocation){ toast('Este navegador no da la posición'); return; }
@@ -385,7 +446,7 @@ async function refresh(force){
 setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}),1000);
 refresh(true);
 setInterval(()=>refresh(false), CFG.refreshMs);
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refresh(false); });
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ refresh(false); boltConnect(); boltRender(true); } });
 </script>
 </body>
 </html>
