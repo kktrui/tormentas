@@ -124,7 +124,7 @@ body.mesa #sheet{gap:14px}
     <button id="share">↗ Compartir</button>
     <button id="mesa">🖥 Mesa</button>
   </div>
-  <div class="legend"><span>Débil</span><i style="background:linear-gradient(90deg,#88ddee,#004768)"></i><i style="background:linear-gradient(90deg,#ffee00,#ff8100)"></i><i style="background:linear-gradient(90deg,#ff4400,#5d0000)"></i><i style="background:#ff6cff"></i><span>Extrema</span><span id="agenote" style="margin-left:auto"></span></div>
+  <div class="legend"><span>Débil</span><i style="background:linear-gradient(90deg,#88ddee,#004768)"></i><i style="background:linear-gradient(90deg,#ffee00,#ff8100)"></i><i style="background:linear-gradient(90deg,#ff4400,#5d0000)"></i><i style="background:#ff6cff"></i><span>Extrema</span><span id="agenote" style="margin-left:auto"></span><span id="ver" style="margin-left:8px;opacity:.7"></span></div>
 </section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -642,7 +642,13 @@ async function refresh(force){
 setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}),1000);
 refresh(true);
 setInterval(()=>refresh(false), CFG.refreshMs);
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ refresh(false); boltConnect(); boltRender(true); if(document.body.classList.contains('mesa')) wakeOn(); } });
+// Autoactualización: si GitHub Pages sirve una versión nueva de esta página, recargar (evita copias en caché en el móvil).
+let pageTag=null;
+async function checkVersion(){ try{ const r=await fetch(location.pathname,{method:'HEAD',cache:'no-store'}); const t=r.headers.get('etag')||r.headers.get('last-modified'); if(!t) return;
+  if(pageTag===null){ pageTag=t; const lm=r.headers.get('last-modified'); if(lm) $('ver').textContent='v '+new Date(lm).toLocaleString('es-ES',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+  else if(t!==pageTag){ toast('Hay una versión nueva de la página, recargando…'); setTimeout(()=>location.reload(),1500); } }catch(e){} }
+checkVersion(); setInterval(checkVersion, 5*60e3);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ checkVersion(); refresh(false); boltConnect(); boltRender(true); if(document.body.classList.contains('mesa')) wakeOn(); } });
 </script>
 </body>
 </html>
