@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b1220">
+<title>Tormentas Mallorca</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: full-screen map, slim top bar, bottom sheet with the verdict. Dark-first, single theme (radar reads on dark). */
+:root{
+  --bg:#0b1220; --panel:rgba(13,20,35,.92); --fg:#e8eef8; --muted:#8fa0bd; --line:rgba(255,255,255,.1);
+  --accent:#ffb000; --ok:#4fd18b; --warn:#ffb000; --bad:#ff5a3c;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;overflow:hidden}
+#map{position:fixed;inset:0;background:#0b1220}
+.leaflet-container{font-family:var(--font)}
+.leaflet-control-attribution{background:rgba(11,18,32,.7)!important;color:var(--muted)!important;font-size:10px}
+.leaflet-control-attribution a{color:#b9c7e0!important}
+header{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;gap:10px;
+  padding:calc(8px + env(safe-area-inset-top,0px)) max(14px,env(safe-area-inset-right,0px)) 8px max(14px,env(safe-area-inset-left,0px));
+  background:linear-gradient(var(--bg),rgba(11,18,32,.6) 70%,transparent);pointer-events:none}
+header h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.2px}
+header .clock{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:1000;background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-top:1px solid var(--line);border-radius:18px 18px 0 0;
+  padding:12px max(16px,env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
+  display:flex;flex-direction:column;gap:10px}
+.verdict{display:flex;align-items:flex-start;gap:12px}
+.dot{flex:none;width:12px;height:12px;border-radius:50%;margin-top:7px;background:var(--muted)}
+.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad);box-shadow:0 0 0 4px rgba(255,90,60,.25)}
+.verdict h2{margin:0;font-size:20px;line-height:1.2;font-weight:650;text-wrap:balance}
+.verdict p{margin:4px 0 0;color:var(--muted);font-size:13.5px;line-height:1.35}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.cell{border:1px solid var(--line);border-radius:10px;padding:7px 8px;min-width:0}
+.cell small{display:block;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}
+.cell b{display:block;font-size:17px;font-variant-numeric:tabular-nums;margin-top:2px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row{display:flex;align-items:center;gap:8px}
+.row input[type=range]{flex:1;min-width:0;accent-color:var(--accent)}
+.row .t{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px;min-width:5.2em;text-align:right}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+button{font:inherit;font-size:13.5px;color:var(--fg);background:rgba(255,255,255,.07);border:1px solid var(--line);border-radius:10px;padding:8px 11px;cursor:pointer;flex:1;min-width:0;white-space:nowrap}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button.active{background:rgba(255,176,0,.18);border-color:var(--accent)}
+button.icon{flex:0 0 auto;padding:8px 12px}
+#toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(52px + env(safe-area-inset-top,0px));z-index:1200;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;max-width:92vw;transition:opacity .3s}
+#toast[hidden]{display:none}
+.legend{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px}
+.legend i{display:inline-block;width:28px;height:8px;border-radius:2px}
+.leaflet-marker-icon.home{background:transparent;border:0}
+.home svg{filter:drop-shadow(0 1px 2px rgba(0,0,0,.7))}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+@media (min-width:720px){#sheet{left:auto;right:16px;bottom:16px;width:400px;border-radius:16px;border:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div id="map" role="application" aria-label="Mapa de radar"></div>
+<header><h1>Tormentas · radar</h1><span class="clock" id="clock">—</span></header>
+<div id="toast" hidden></div>
+
+<section id="sheet" aria-live="polite">
+  <div class="verdict">
+    <span class="dot" id="dot"></span>
+    <div style="min-width:0">
+      <h2 id="headline">Cargando radar…</h2>
+      <p id="sub">Descargando los últimos fotogramas de RainViewer.</p>
+    </div>
+  </div>
+  <div class="grid">
+    <div class="cell"><small>Lluvia</small><b id="eLight">—</b></div>
+    <div class="cell"><small>Fuerte</small><b id="eStrong">—</b></div>
+    <div class="cell"><small>Muy fuerte</small><b id="eSevere">—</b></div>
+    <div class="cell"><small>Rumbo</small><b id="eDir">—</b></div>
+  </div>
+  <div class="row">
+    <button class="icon" id="play" aria-label="Reproducir o pausar">⏸</button>
+    <input type="range" id="slider" min="0" max="0" value="0" aria-label="Fotograma">
+    <span class="t" id="ftime">—</span>
+  </div>
+  <div class="btns">
+    <button id="gps">📍 Mi posición</button>
+    <button id="pick">🏠 Fijar en el mapa</button>
+    <button id="reload">↻ Actualizar</button>
+  </div>
+  <div class="legend"><span>Débil</span><i style="background:linear-gradient(90deg,#88ddee,#004768)"></i><i style="background:linear-gradient(90deg,#ffee00,#ff8100)"></i><i style="background:linear-gradient(90deg,#ff4400,#5d0000)"></i><i style="background:#ff6cff"></i><span>Extrema</span><span id="agenote" style="margin-left:auto"></span></div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+'use strict';
+// ---------- Config ----------
+const CFG = {
+  radiusKm: 10,          // radio alrededor de la posición que cuenta como "me afecta"
+  horizonMin: 150,       // hasta cuándo se extrapola
+  thr: { light: 15, strong: 35, severe: 45 }, // dBZ aproximados
+  analysisFrames: 5,     // fotogramas usados para estimar el movimiento (4 pares)
+  playFrames: 7,         // fotogramas animados (última hora)
+  refreshMs: 5 * 60e3,
+  minRainPx: 150,        // píxeles con lluvia mínimos para fiarse del vector
+  sigmaKm: 180,          // peso gaussiano alrededor de la posición al correlar
+};
+const DEFAULT_POS = { lat: 39.5696, lng: 2.6502, name: 'Palma (por defecto)' };
+const RV_API = 'https://api.rainviewer.com/public/weather-maps.json';
+const $ = id => document.getElementById(id);
+
+// ---------- Estado ----------
+const S = { pos: loadPos(), frames: [], host: '', layers: new Map(), playList: [], idx: 0, playing: true, timer: null,
+            analysis: null, picking: false, grid: null, lastGen: 0, busy: false };
+
+function loadPos(){ try{ const p=JSON.parse(localStorage.getItem('tormentas.pos')); if(p&&isFinite(p.lat)&&isFinite(p.lng)) return p; }catch(e){} return {...DEFAULT_POS}; }
+function savePos(){ try{ localStorage.setItem('tormentas.pos', JSON.stringify(S.pos)); }catch(e){} }
+
+// ---------- Mapa ----------
+const map = L.map('map', { zoomControl:false, attributionControl:true, worldCopyJump:false }).setView([S.pos.lat, S.pos.lng], 8);
+L.control.zoom({ position:'topright' }).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+  maxNativeZoom:16, maxZoom:18, attribution:'Mapa © Esri · radar © RainViewer'
+}).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+  maxNativeZoom:16, maxZoom:18, opacity:.8, zIndex:8, pane:'overlayPane'
+}).addTo(map);
+const overlays = L.layerGroup().addTo(map);
+const homeIcon = L.divIcon({ className:'home', html:'<svg width="26" height="26" viewBox="0 0 26 26"><circle cx="13" cy="13" r="6" fill="#ffb000" stroke="#0b1220" stroke-width="2"/><circle cx="13" cy="13" r="11" fill="none" stroke="#ffb000" stroke-width="1.5" opacity=".6"/></svg>', iconSize:[26,26], iconAnchor:[13,13] });
+let homeMarker = L.marker([S.pos.lat,S.pos.lng], { icon:homeIcon, keyboard:false }).addTo(map);
+let homeCircle = L.circle([S.pos.lat,S.pos.lng], { radius:CFG.radiusKm*1000, color:'#ffb000', weight:1, fill:false, dashArray:'4 4', interactive:false }).addTo(map);
+map.on('click', e => { if(!S.picking) return; S.picking=false; $('pick').classList.remove('active'); setPos({lat:e.latlng.lat, lng:e.latlng.lng, name:'Punto fijado'}); });
+
+function setPos(p){ S.pos=p; savePos(); homeMarker.setLatLng([p.lat,p.lng]); homeCircle.setLatLng([p.lat,p.lng]); map.panTo([p.lat,p.lng]); toast('Posición: '+p.name); analyze(); }
+
+// ---------- Fotogramas ----------
+async function fetchFrames(){
+  const r = await fetch(RV_API, { cache:'no-store' });
+  if(!r.ok) throw new Error('RainViewer '+r.status);
+  const j = await r.json();
+  S.host = j.host; S.lastGen = j.generated;
+  S.frames = (j.radar.past||[]).map(f=>({...f, kind:'past'})).concat((j.radar.nowcast||[]).map(f=>({...f, kind:'nowcast'})));
+}
+function tileUrl(f){ return `${S.host}${f.path}/512/{z}/{x}/{y}/2/1_1.png`; } // teselas de 512 px: la API gratuita sirve hasta z7 (= z8 con 512)
+function rebuildLayers(){
+  const past = S.frames.filter(f=>f.kind==='past');
+  const list = past.slice(-CFG.playFrames).concat(S.frames.filter(f=>f.kind==='nowcast'));
+  const keep = new Set(list.map(f=>f.path));
+  for(const [k,l] of S.layers){ if(!keep.has(k)){ map.removeLayer(l); S.layers.delete(k);} }
+  for(const f of list){ if(!S.layers.has(f.path)){ const l=L.tileLayer(tileUrl(f),{opacity:0, zIndex:5, tileSize:512, zoomOffset:-1, maxNativeZoom:8, maxZoom:18, crossOrigin:true}); l.addTo(map); S.layers.set(f.path,l);} }
+  S.playList = list;
+  $('slider').max = Math.max(0, list.length-1);
+  showFrame(list.length ? list.length-1 - (S.frames.some(f=>f.kind==='nowcast') ? S.frames.filter(f=>f.kind==='nowcast').length : 0) : 0);
+}
+function showFrame(i){
+  if(!S.playList.length) return;
+  S.idx = Math.max(0, Math.min(S.playList.length-1, i));
+  S.playList.forEach((f,k)=>S.layers.get(f.path).setOpacity(k===S.idx?0.72:0));
+  $('slider').value = S.idx;
+  const f=S.playList[S.idx];
+  $('ftime').textContent = hhmm(f.time) + (f.kind==='nowcast'?' ▸':'');
+}
+function hhmm(t){ return new Date(t*1000).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}); }
+function tick(){
+  if(!S.playing || !S.playList.length) return;
+  const last = S.idx===S.playList.length-1;
+  S.timer = setTimeout(()=>{ showFrame(last?0:S.idx+1); tick(); }, last?1800:650);
+}
+function setPlaying(p){ S.playing=p; $('play').textContent=p?'⏸':'▶'; clearTimeout(S.timer); if(p) tick(); }
+$('play').onclick = ()=>setPlaying(!S.playing);
+$('slider').oninput = e=>{ setPlaying(false); showFrame(+e.target.value); };
+
+// ---------- Mosaico de análisis ----------
+// 2x2 teselas de 512px a zoom 6 (≈0,9 km/px en Baleares, ventana ≈ 950 km) centradas en la posición.
+const Z=6, NT=1<<Z, TS=512, NB=2, W=TS*NB;
+function gridFor(pos){
+  const x=(pos.lng+180)/360*NT, lr=pos.lat*Math.PI/180;
+  const y=(1-Math.log(Math.tan(lr)+1/Math.cos(lr))/Math.PI)/2*NT;
+  const tx0=Math.round(x)-1, ty0=Math.round(y)-1;
+  return { tx0, ty0, px:(x-tx0)*TS, py:(y-ty0)*TS, kmPerPx: 40075.016*Math.cos(lr)/(NT*TS) };
+}
+function pxToLatLng(g, px, py){
+  const x=g.tx0+px/TS, y=g.ty0+py/TS;
+  const lng=x/NT*360-180, n=Math.PI*(1-2*y/NT);
+  return L.latLng(Math.atan(Math.sinh(n))*180/Math.PI, lng);
+}
+function loadImg(url){ return new Promise((res,rej)=>{ const im=new Image(); im.crossOrigin='anonymous'; im.onload=()=>res(im); im.onerror=()=>rej(new Error('tile')); im.src=url; }); }
+// Paleta RainViewer → dBZ aproximados (rampa: beige translúcido, azules, amarillos, rojos, magenta)
+function dbzOf(r,g,b,a){
+  if(a===0) return 0;
+  if(a<255) return 4+6*a/255;                              // llovizna 4–10
+  if(b>r && b>=g){ const v=Math.max(r,g,b)/255; return 10+Math.min(1,Math.max(0,(0.93-v)/0.52))*20; } // azules 10–30
+  if(r===255 && b===255 && g<200){ return 58+Math.min(1,Math.max(0,(170-g)/92))*12; }                  // magenta 58–70
+  if(b===0 && g>=100){ return 32+Math.min(1,Math.max(0,(238-g)/109))*10; }                           // amarillo/naranja 32–42
+  if(b===0 && g<100){ const v=r/255; return 42+Math.min(1,Math.max(0,(1-v)/0.64))*16; }               // rojos 42–58
+  return 0;                                                 // blanco u otros: desconocido
+}
+async function loadField(frame, g){
+  const c=document.createElement('canvas'); c.width=c.height=W;
+  const ctx=c.getContext('2d',{willReadFrequently:true});
+  let ok=0;
+  await Promise.all([[0,0],[1,0],[0,1],[1,1]].map(([i,j])=>loadImg(`${S.host}${frame.path}/${TS}/${Z}/${g.tx0+i}/${g.ty0+j}/2/0_0.png`).then(im=>{ctx.drawImage(im,i*TS,j*TS);ok++;}).catch(()=>{})));
+  if(!ok) throw new Error('Sin teselas de radar');
+  const d=ctx.getImageData(0,0,W,W).data, f=new Float32Array(W*W);
+  for(let p=0,q=0;p<f.length;p++,q+=4) f[p]=dbzOf(d[q],d[q+1],d[q+2],d[q+3]);
+  return f;
+}
+function pool(f,k){ const w=W/k, o=new Float32Array(w*w); for(let y=0;y<w;y++)for(let x=0;x<w;x++){let s=0;for(let j=0;j<k;j++){const r=(y*k+j)*W+x*k;for(let i=0;i<k;i++)s+=f[r+i];} o[y*w+x]=s/(k*k);} return o; }
+function masked(f, thr){ const o=new Float32Array(f.length); for(let i=0;i<f.length;i++) o[i]=f[i]>=thr?f[i]:0; return o; }
+function weightAround(f, w, cx, cy, sigmaPx){ const o=new Float32Array(f.length); const s2=2*sigmaPx*sigmaPx; for(let y=0;y<w;y++)for(let x=0;x<w;x++){const d2=(x-cx)**2+(y-cy)**2; o[y*w+x]=f[y*w+x]*Math.exp(-d2/s2);} return o; }
+// Mejor desplazamiento d tal que A(p) ≈ B(p+d): correlación normalizada sobre el solape.
+function bestShift(A,B,w,cx,cy,range){
+  let best={dx:0,dy:0,score:-1};
+  for(let dy=cy-range;dy<=cy+range;dy++)for(let dx=cx-range;dx<=cx+range;dx++){
+    let sab=0,saa=0,sbb=0;
+    const y0=Math.max(0,-dy), y1=Math.min(w,w-dy), x0=Math.max(0,-dx), x1=Math.min(w,w-dx);
+    for(let y=y0;y<y1;y++){ const ra=y*w, rb=(y+dy)*w+dx; for(let x=x0;x<x1;x++){ const a=A[ra+x], b=B[rb+x]; sab+=a*b; saa+=a*a; sbb+=b*b; } }
+    const s=sab/Math.sqrt(saa*sbb+1e-9);
+    if(s>best.score) best={dx,dy,score:s};
+  }
+  return best;
+}
+function motionVector(fields, g){
+  // fields: cronológico, último = más reciente. Devuelve px/fotograma (10 min) en resolución completa.
+  const sig=CFG.sigmaKm/g.kmPerPx;
+  const vs=[];
+  for(let i=1;i<fields.length;i++){
+    const A=masked(fields[i-1],10), B=masked(fields[i],10);
+    const A4=weightAround(pool(A,4),W/4,g.px/4,g.py/4,sig/4), B4=pool(B,4);
+    const c=bestShift(A4,B4,W/4,0,0,10);                  // ±10 px a 1/4 → ±40 px ≈ ±37 km / 10 min
+    const A2=weightAround(pool(A,2),W/2,g.px/2,g.py/2,sig/2), B2=pool(B,2);
+    const r=bestShift(A2,B2,W/2,c.dx*2,c.dy*2,3);
+    vs.push({dx:r.dx*2, dy:r.dy*2, score:r.score});
+  }
+  const good=vs.filter(v=>v.score>0.35);
+  if(!good.length) return null;
+  const sw=good.reduce((s,v)=>s+v.score,0);
+  const dx=good.reduce((s,v)=>s+v.dx*v.score,0)/sw, dy=good.reduce((s,v)=>s+v.dy*v.score,0)/sw;
+  const spread=good.reduce((s,v)=>s+Math.hypot(v.dx-dx,v.dy-dy),0)/good.length;
+  return { dx, dy, score:sw/good.length, spread, pairs:good.length, all:vs };
+}
+function discOffsets(rPx){ const o=[]; for(let j=-rPx;j<=rPx;j++)for(let i=-rPx;i<=rPx;i++) if(i*i+j*j<=rPx*rPx) o.push([i,j]); return o; }
+function maxAt(F, x, y, disc){ let m=0; const xi=Math.round(x), yi=Math.round(y); for(const [i,j] of disc){ const xx=xi+i, yy=yi+j; if(xx<0||yy<0||xx>=W||yy>=W) continue; const v=F[yy*W+xx]; if(v>m) m=v; } return m; }
+function etaSeries(F, v, g){
+  const disc=discOffsets(Math.max(2,Math.round(CFG.radiusKm/g.kmPerPx)));
+  const out=[];
+  for(let t=0;t<=CFG.horizonMin;t++){ out.push(maxAt(F, g.px-v.dx*t/10, g.py-v.dy*t/10, disc)); }
+  return out;
+}
+function nearestCell(F, g, thr){
+  let best=null, bd=Infinity;
+  for(let y=0;y<W;y+=2)for(let x=0;x<W;x+=2){ if(F[y*W+x]>=thr){ const d=(x-g.px)**2+(y-g.py)**2; if(d<bd){bd=d;best=[x,y];} } }
+  if(!best) return null;
+  const R=Math.round(25/g.kmPerPx); let sx=0,sy=0,n=0;
+  for(let y=Math.max(0,best[1]-R);y<Math.min(W,best[1]+R);y++)for(let x=Math.max(0,best[0]-R);x<Math.min(W,best[0]+R);x++){ if(F[y*W+x]>=thr){sx+=x;sy+=y;n++;} }
+  return { x:sx/n, y:sy/n, distKm:Math.sqrt(bd)*g.kmPerPx };
+}
+
+// ---------- Análisis ----------
+async function analyze(){
+  if(S.busy || !S.frames.length) return; S.busy=true;
+  try{
+    const g=gridFor(S.pos); S.grid=g;
+    const past=S.frames.filter(f=>f.kind==='past').slice(-CFG.analysisFrames);
+    const fields=await Promise.all(past.map(f=>loadField(f,g)));
+    const F=fields[fields.length-1];
+    let rainPx=0; for(let i=0;i<F.length;i++) if(F[i]>=CFG.thr.light) rainPx++;
+    const v = rainPx>=CFG.minRainPx ? motionVector(fields,g) : null;
+    const latest=past[past.length-1];
+    const ageMin=Math.max(0,(Date.now()/1000-latest.time)/60);
+    const res={ g, F, v, rainPx, ageMin, frameTime:latest.time };
+    if(v){
+      const sp=Math.hypot(v.dx,v.dy)*g.kmPerPx*6; // km/h
+      res.speedKmh=sp; res.bearing=(Math.atan2(v.dx,-v.dy)*180/Math.PI+360)%360;
+      res.series=etaSeries(F,v,g);
+      const first=thr=>{ const i=res.series.findIndex(x=>x>=thr); return i<0?null:i; };
+      res.eta={ light:first(CFG.thr.light), strong:first(CFG.thr.strong), severe:first(CFG.thr.severe) };
+      if(res.eta.light!=null){ let e=res.eta.light; while(e<res.series.length && res.series[e]>=CFG.thr.light) e++; res.endLight=e; }
+      res.now=res.series[0];
+      res.cell=nearestCell(F,g,30)||nearestCell(F,g,CFG.thr.light);
+      const consistency = v.spread/Math.max(1,Math.hypot(v.dx,v.dy));
+      res.conf = (v.score>0.6 && consistency<0.35 && v.pairs>=3) ? 'alta' : (v.score>0.45 && consistency<0.6) ? 'media' : 'baja';
+    }
+    S.analysis=res; render(res); draw(res);
+  }catch(e){ console.error(e); $('headline').textContent='No se pudo analizar el radar'; $('sub').textContent=e.message; $('dot').className='dot'; }
+  finally{ S.busy=false; }
+}
+const DIRS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
+const dirName=b=>DIRS[Math.round(b/22.5)%16];
+const fmtMin=m=>m==null?'—':(m<1?'ahora':m<60?`${Math.round(m)} min`:`${Math.floor(m/60)} h ${String(Math.round(m%60)).padStart(2,'0')}`);
+function render(r){
+  const age=Math.round(r.ageMin);
+  $('agenote').textContent=`radar de las ${hhmm(r.frameTime)} (hace ${age} min)`;
+  const adj=t=>t==null?null:Math.max(0,t-r.ageMin); // descuenta la antigüedad del fotograma
+  let head, sub, cls;
+  if(r.rainPx<CFG.minRainPx){ head='Sin precipitación relevante en unos 400 km'; sub='El radar no muestra ecos significativos alrededor de tu posición.'; cls='ok'; }
+  else if(!r.v){ head='Hay lluvia cerca, pero no se puede estimar el rumbo'; sub='Los fotogramas no son coherentes entre sí. Mira la animación.'; cls='warn'; }
+  else{
+    const from=dirName((r.bearing+180)%360), to=dirName(r.bearing);
+    const mov = r.speedKmh<6 ? 'Casi estacionaria' : `Viene del ${from} hacia el ${to} a ${Math.round(r.speedKmh)} km/h`;
+    sub=`${mov} · fiabilidad ${r.conf}.`;
+    if(r.now>=CFG.thr.strong){ head='Lluvia fuerte sobre tu posición ahora'; cls='bad'; }
+    else if(r.now>=CFG.thr.light){ head='Ya llueve sobre tu posición'; cls='warn'; if(r.eta.strong!=null) head+=` · fuerte en ${fmtMin(adj(r.eta.strong))}`; }
+    else if(r.eta.strong!=null){ head=`Lluvia fuerte en ${fmtMin(adj(r.eta.strong))}`; cls=adj(r.eta.strong)<30?'bad':'warn'; }
+    else if(r.eta.light!=null){ head=`Lluvia en ${fmtMin(adj(r.eta.light))}, sin ecos fuertes en tu ruta`; cls='warn'; }
+    else{ head=`Con el rumbo actual no te afecta en ${Math.round(CFG.horizonMin/60*10)/10} h`; cls='ok'; if(r.cell) sub+=` Eco más cercano a ${Math.round(r.cell.distKm)} km.`; }
+    if(r.endLight!=null && r.eta.light!=null && r.eta.light<r.endLight) sub+=` Duración estimada ${fmtMin(r.endLight-r.eta.light)}.`;
+    if(r.conf==='baja') sub+=' Tormentas de formación local: fíate más de la animación que del número.';
+  }
+  $('headline').textContent=head; $('sub').textContent=sub; $('dot').className='dot '+cls;
+  $('eLight').textContent = r.v?fmtMin(adj(r.eta.light)):'—';
+  $('eStrong').textContent = r.v?fmtMin(adj(r.eta.strong)):'—';
+  $('eSevere').textContent = r.v?fmtMin(adj(r.eta.severe)):'—';
+  $('eDir').textContent = r.v?(r.speedKmh<6?'estac.':`${dirName(r.bearing)} ${Math.round(r.speedKmh)} km/h`):'—';
+}
+function draw(r){
+  overlays.clearLayers();
+  if(!r.v || !r.cell || r.speedKmh<6) return;
+  const g=r.g, v=r.v;
+  const minutes=[0,30,60,90];
+  const pts=minutes.map(m=>pxToLatLng(g, r.cell.x+v.dx*m/10, r.cell.y+v.dy*m/10));
+  // trayectoria 90 min punteada + flecha de 30 min
+  L.polyline(pts,{color:'#ff5a3c',weight:2,dashArray:'6 6',opacity:.8,interactive:false}).addTo(overlays);
+  L.polyline([pts[0],pts[1]],{color:'#ff5a3c',weight:4,opacity:.95,interactive:false}).addTo(overlays);
+  const ang=Math.atan2(v.dy,v.dx), hl=18/g.kmPerPx*1; // cabeza ≈ 18 km
+  const tipx=r.cell.x+v.dx*3, tipy=r.cell.y+v.dy*3;
+  const h1=pxToLatLng(g, tipx-hl*Math.cos(ang-0.5), tipy-hl*Math.sin(ang-0.5));
+  const h2=pxToLatLng(g, tipx-hl*Math.cos(ang+0.5), tipy-hl*Math.sin(ang+0.5));
+  L.polyline([h1,pts[1],h2],{color:'#ff5a3c',weight:4,opacity:.95,interactive:false}).addTo(overlays);
+  for(let i=1;i<pts.length;i++) L.circleMarker(pts[i],{radius:3,color:'#ff5a3c',fillColor:'#0b1220',fillOpacity:1,weight:2,interactive:false}).bindTooltip(`+${minutes[i]} min`,{permanent:true,direction:'right',className:'tt',offset:[6,0]}).addTo(overlays);
+  L.circleMarker(pts[0],{radius:5,color:'#ff5a3c',fillColor:'#ff5a3c',fillOpacity:.9,weight:1,interactive:false}).addTo(overlays);
+}
+
+// ---------- Botones ----------
+$('gps').onclick=()=>{
+  if(!navigator.geolocation){ toast('Este navegador no da la posición'); return; }
+  $('gps').disabled=true;
+  navigator.geolocation.getCurrentPosition(p=>{ $('gps').disabled=false; setPos({lat:p.coords.latitude,lng:p.coords.longitude,name:'Mi posición'}); },
+    e=>{ $('gps').disabled=false; toast('Sin posición: '+(e.code===1?'permiso denegado':'no disponible')); }, {enableHighAccuracy:false,timeout:10000,maximumAge:60000});
+};
+$('pick').onclick=()=>{ S.picking=!S.picking; $('pick').classList.toggle('active',S.picking); if(S.picking) toast('Toca el mapa donde quieras fijar la posición'); };
+$('reload').onclick=()=>refresh(true);
+let toastTimer; function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.hidden=true,3500); }
+
+// ---------- Ciclo ----------
+async function refresh(force){
+  try{
+    const before=S.lastGen; await fetchFrames();
+    if(force || S.lastGen!==before || !S.playList.length){ rebuildLayers(); if(S.playing){ clearTimeout(S.timer); tick(); } await analyze(); }
+  }catch(e){ console.error(e); $('headline').textContent='Sin conexión con el radar'; $('sub').textContent=e.message; }
+}
+setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}),1000);
+refresh(true);
+setInterval(()=>refresh(false), CFG.refreshMs);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refresh(false); });
+</script>
+</body>
+</html>
