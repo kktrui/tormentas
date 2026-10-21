@@ -30,8 +30,12 @@ header .clock{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--mut
 #sheet{position:fixed;left:0;right:0;bottom:0;z-index:1000;background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border-top:1px solid var(--line);border-radius:18px 18px 0 0;
   padding:12px max(16px,env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
-  display:flex;flex-direction:column;gap:10px}
-.verdict{display:flex;align-items:flex-start;gap:12px}
+  display:flex;flex-direction:column;gap:10px;transition:transform .25s ease;will-change:transform}
+#sheet.dragging{transition:none}
+.grab{display:flex;justify-content:center;padding:0 0 6px;margin:-4px 0 -6px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.grab span{width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,.28)}
+body.mesa .grab{display:none}
+.verdict{display:flex;align-items:flex-start;gap:12px;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab}
 .dot{flex:none;width:12px;height:12px;border-radius:50%;margin-top:7px;background:var(--muted)}
 .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad);box-shadow:0 0 0 4px rgba(255,90,60,.25)}
 .verdict h2{margin:0;font-size:20px;line-height:1.2;font-weight:650;text-wrap:balance}
@@ -93,6 +97,7 @@ body.mesa #sheet{gap:14px}
 <button id="mesaExit" class="icon">✕ Salir del modo mesa</button>
 
 <section id="sheet" aria-live="polite">
+  <div class="grab" id="grab" aria-label="Arrastra para plegar o desplegar"><span></span></div>
   <div class="verdict">
     <span class="dot" id="dot"></span>
     <div style="min-width:0">
@@ -508,6 +513,23 @@ $('share').onclick=async()=>{
   try{ await navigator.clipboard.writeText(text); toast('Resumen copiado al portapapeles'); }catch(e){ toast('No se pudo compartir en este navegador'); }
 };
 
+// ---------- Hoja inferior arrastrable ----------
+const sheet=$('sheet'); let sheetCollapsed=false, sheetMax=0, drag=null;
+function sheetMeasure(){ const r=sheet.getBoundingClientRect(), v=$('sub').getBoundingClientRect(); sheetMax=Math.max(0, r.height-(v.bottom-r.top)-10); }
+function sheetApply(){ if(document.body.classList.contains('mesa')){ sheet.style.transform='translateY(0)'; return; } sheetMeasure(); sheet.style.transform=`translateY(${sheetCollapsed?sheetMax:0}px)`; }
+function setSheet(c){ sheetCollapsed=c; sheetApply(); try{ localStorage.setItem('tormentas.sheet',c?'1':'0'); }catch(e){} }
+function sheetDown(e){ if(document.body.classList.contains('mesa') || e.target.closest('button,input,a')) return;
+  sheetMeasure(); drag={ y0:e.clientY, t0:Date.now(), base:sheetCollapsed?sheetMax:0, moved:false }; sheet.classList.add('dragging');
+  try{ e.currentTarget.setPointerCapture(e.pointerId); }catch(err){} }
+function sheetMove(e){ if(!drag) return; const dy=e.clientY-drag.y0; if(Math.abs(dy)>4) drag.moved=true;
+  sheet.style.transform=`translateY(${Math.max(0,Math.min(sheetMax,drag.base+dy))}px)`; }
+function sheetUp(e){ if(!drag) return; sheet.classList.remove('dragging'); const dy=e.clientY-drag.y0, vel=dy/Math.max(1,Date.now()-drag.t0); let c;
+  if(!drag.moved) c=!sheetCollapsed; else if(Math.abs(vel)>0.4) c=vel>0; else c=(drag.base+dy)>sheetMax/2; drag=null; setSheet(c); }
+for(const el of [$('grab'), document.querySelector('.verdict')]){ el.addEventListener('pointerdown',sheetDown); el.addEventListener('pointermove',sheetMove); el.addEventListener('pointerup',sheetUp); el.addEventListener('pointercancel',sheetUp); }
+new ResizeObserver(()=>{ if(sheetCollapsed) sheetApply(); }).observe(sheet);
+window.addEventListener('resize',()=>sheetApply());
+try{ if(localStorage.getItem('tormentas.sheet')==='1') setSheet(true); }catch(e){}
+
 // ---------- Modo mesa ----------
 let wakeLock=null;
 async function wakeOn(){ try{ if('wakeLock' in navigator && !wakeLock){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{ wakeLock=null; }); } }catch(e){} }
@@ -516,7 +538,7 @@ function setMesa(on){
   document.body.classList.toggle('mesa',on); $('mesa').classList.toggle('active',on);
   if(on){ wakeOn(); if(location.hash!=='#mesa') history.replaceState(null,'','#mesa'); toast('Modo mesa: letras grandes y pantalla encendida. ✕ para salir.'); }
   else { wakeOff(); if(location.hash==='#mesa') history.replaceState(null,'',location.pathname); }
-  setTimeout(()=>map.invalidateSize(),50);
+  setTimeout(()=>{ map.invalidateSize(); sheetApply(); },50);
 }
 $('mesa').onclick=()=>setMesa(!document.body.classList.contains('mesa'));
 $('mesaExit').onclick=()=>setMesa(false);
