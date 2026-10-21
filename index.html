@@ -75,7 +75,7 @@ button.icon{flex:0 0 auto;padding:8px 12px}
     <div class="cell"><small>Lluvia</small><b id="eLight">—</b></div>
     <div class="cell"><small>Fuerte</small><b id="eStrong">—</b></div>
     <div class="cell"><small>Muy fuerte</small><b id="eSevere">—</b></div>
-    <div class="cell"><small>Rumbo</small><b id="eDir">—</b></div>
+    <div class="cell"><small>Rumbo · km/h</small><b id="eDir">—</b></div>
   </div>
   <div class="row">
     <button class="icon" id="play" aria-label="Reproducir o pausar">⏸</button>
@@ -310,7 +310,7 @@ function render(r){
   $('eLight').textContent = r.v?fmtMin(adj(r.eta.light)):'—';
   $('eStrong').textContent = r.v?fmtMin(adj(r.eta.strong)):'—';
   $('eSevere').textContent = r.v?fmtMin(adj(r.eta.severe)):'—';
-  $('eDir').textContent = r.v?(r.speedKmh<6?'estac.':`${dirName(r.bearing)} ${Math.round(r.speedKmh)} km/h`):'—';
+  $('eDir').textContent = r.v?(r.speedKmh<6?'estac.':`${dirName(r.bearing)} ${Math.round(r.speedKmh)}`):'—';
 }
 function draw(r){
   overlays.clearLayers();
