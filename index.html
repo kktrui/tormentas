@@ -367,11 +367,13 @@ $('gps').onclick=()=>{
   if(!navigator.geolocation){ toast('Este navegador no da la posición'); return; }
   $('gps').disabled=true;
   navigator.geolocation.getCurrentPosition(p=>{ $('gps').disabled=false; setPos({lat:p.coords.latitude,lng:p.coords.longitude,name:'Mi posición'}); },
-    e=>{ $('gps').disabled=false; toast('Sin posición: '+(e.code===1?'permiso denegado':'no disponible')); }, {enableHighAccuracy:false,timeout:10000,maximumAge:60000});
+    e=>{ $('gps').disabled=false;
+      if(e.code===1) toast('Ubicación denegada. En iPhone: Ajustes › Privacidad › Localización › Sitios web de Safari › "Preguntar" o "Al usar la app"; y Ajustes › Safari › Ubicación › "Preguntar". Mientras tanto usa "Fijar en el mapa".', 9000);
+      else toast('Posición no disponible ahora mismo. Usa "Fijar en el mapa".'); }, {enableHighAccuracy:false,timeout:10000,maximumAge:60000});
 };
 $('pick').onclick=()=>{ S.picking=!S.picking; $('pick').classList.toggle('active',S.picking); if(S.picking) toast('Toca el mapa donde quieras fijar la posición'); };
 $('reload').onclick=()=>refresh(true);
-let toastTimer; function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.hidden=true,3500); }
+let toastTimer; function toast(msg,ms){ const t=$('toast'); t.textContent=msg; t.hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.hidden=true,ms||3500); }
 
 // ---------- Ciclo ----------
 async function refresh(force){
