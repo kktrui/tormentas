@@ -148,6 +148,7 @@ const CFG = {
   boltKeepMin: 30,       // los rayos se muestran durante estos minutos
   boltRangeKm: 1500,     // solo se guardan rayos a menos de esta distancia de la posición (Europa occidental desde Baleares)
   boltNearKm: 50,        // radio del contador de rayos cercanos
+  hailDbz: 55,           // reflectividad a partir de la cual se avisa de posible granizo
   sigmaKm: 180,          // peso gaussiano alrededor de la posición al correlar
 };
 const DEFAULT_POS = { lat: 39.5696, lng: 2.6502, name: 'Palma (por defecto)' };
@@ -345,7 +346,7 @@ async function analyze(){
     const v = rainPx>=CFG.minRainPx ? motionVector(fields,g) : null;
     const latest=past[past.length-1];
     const ageMin=Math.max(0,(Date.now()/1000-latest.time)/60);
-    const res={ g, F, v, rainPx, ageMin, frameTime:latest.time };
+    const res={ g, F, v, rainPx, ageMin, frameTime:latest.time, computedAt:Date.now() };
     let nearPx=0; { const R2=(CFG.nearKm/g.kmPerPx)**2; for(let y=0;y<W;y+=2)for(let x=0;x<W;x+=2){ if(F[y*W+x]>=CFG.thr.light && (x-g.px)**2+(y-g.py)**2<=R2) nearPx++; } }
     res.nearPx=nearPx*4;
     if(v){
@@ -361,6 +362,13 @@ async function analyze(){
       if(res.eta.light!=null){ let e=res.eta.light+a0; while(e<res.lastValid && res.series[e]>=CFG.thr.light) e++; res.endLight=e-a0; res.endOpen=(e>=res.lastValid); }
       res.now=res.series[a0];
       res.cell=findCell(F,g,v);
+      if(res.cell){ // Estela: posición observada de la célula en cada fotograma anterior (búsqueda alrededor de la posición prevista hacia atrás)
+        const thr=res.cell.strong?CFG.thr.strong:CFG.thr.light, Rk=Math.round(30/g.kmPerPx), trail=[];
+        for(let k=fields.length-2;k>=0;k--){ const back=fields.length-1-k; const px=res.cell.x-v.dx*back, py=res.cell.y-v.dy*back;
+          const Fk=fields[k]; let sx=0,sy=0,n=0;
+          for(let y=Math.max(0,Math.round(py-Rk));y<=Math.min(W-1,Math.round(py+Rk));y++)for(let x=Math.max(0,Math.round(px-Rk));x<=Math.min(W-1,Math.round(px+Rk));x++){ if(Fk[y*W+x]>=thr){ sx+=x; sy+=y; n++; } }
+          if(n<4) break; trail.unshift({x:sx/n,y:sy/n,time:past[k].time}); }
+        res.cell.trail=trail; }
       // Célula lejana que no viene hacia aquí: no se marca, para no señalar tormentas de otra región.
       res.far = res.nearPx<CFG.minRainPx && res.eta.light==null;
       if(res.far) res.cell=null;
@@ -378,9 +386,10 @@ const DIRS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','
 const dirName=b=>DIRS[Math.round(b/22.5)%16];
 const fmtMin=m=>{ if(m==null) return '—'; const r=Math.round(m); return r<1?'ahora':r<60?`${r} min`:`${Math.floor(r/60)} h ${String(r%60).padStart(2,'0')}`; };
 function render(r){
-  const age=Math.round(r.ageMin);
+  const elapsed=(Date.now()-r.computedAt)/60e3; // minutos desde el análisis: cuenta atrás entre fotogramas
+  const age=Math.round(r.ageMin+elapsed);
   $('agenote').textContent=`radar de las ${hhmm(r.frameTime)} (hace ${age} min)`;
-  const adj=t=>t; // los ETA ya son relativos a ahora
+  const adj=t=>t==null?null:Math.max(0,t-elapsed);
   let head, sub, cls;
   if(r.rainPx<CFG.minRainPx){ head='Sin precipitación relevante en unos 450 km'; sub='El radar no muestra ecos significativos alrededor de tu posición.'; cls='ok'; }
   else if(r.v && r.far){ head=`Sin lluvia a menos de ${CFG.nearKm} km`; sub=`Hay ecos más lejos (se mueven hacia el ${dirName(r.bearing)} a ${Math.round(r.speedKmh)} km/h) pero con ese rumbo no te alcanzan en ${fmtMin(r.horizon)}.`; cls='ok'; }
@@ -393,7 +402,8 @@ function render(r){
     else if(r.now>=CFG.thr.light){ head='Ya llueve sobre tu posición'; cls='warn'; if(r.eta.strong!=null) head+=` · fuerte en ${fmtMin(adj(r.eta.strong))}`; }
     else if(r.eta.strong!=null){ head=`Lluvia fuerte en ${fmtMin(adj(r.eta.strong))}`; cls=adj(r.eta.strong)<30?'bad':'warn'; }
     else if(r.eta.light!=null){ head=`Lluvia en ${fmtMin(adj(r.eta.light))}, sin ecos fuertes en tu ruta`; cls='warn'; }
-    else{ head=`Con el rumbo actual no te afecta en ${fmtMin(r.horizon)}`; cls='ok'; if(r.horizon<CFG.horizonMin-20) sub+=' (límite de la ventana del radar).'; if(r.cell) sub+=` Célula principal a ${Math.round(r.cell.distKm)} km.`; }
+    else{ head=`Con el rumbo actual no te afecta en ${fmtMin(adj(r.horizon))}`; cls='ok'; if(r.horizon<CFG.horizonMin-20) sub+=' (límite de la ventana del radar).'; if(r.cell) sub+=` Célula principal a ${Math.round(r.cell.distKm)} km.`; }
+    if(r.cell && r.cell.maxDbz>=CFG.hailDbz) sub+=` Ecos de ${Math.round(r.cell.maxDbz)} dBZ en la célula: posible granizo.`;
     if(r.endLight!=null && r.eta.light!=null) sub+=r.endOpen?` Lluvia durante más de ${fmtMin(r.endLight-r.eta.light)}.`:` Duración estimada ${fmtMin(r.endLight-r.eta.light)}.`;
     if(r.conf==='baja') sub+=' Tormentas de formación local: fíate más de la animación que del número.';
   }
@@ -412,8 +422,13 @@ function draw(r, dtMin){
   const moving=r.speedKmh>=6;
   const rect=(t,opts)=>{ const ox=moving?v.dx*t/10:0, oy=moving?v.dy*t/10:0;
     return L.polygon([[c.x0+ox,c.y0+oy],[c.x1+ox,c.y0+oy],[c.x1+ox,c.y1+oy],[c.x0+ox,c.y1+oy]].map(([x,y])=>pxToLatLng(g,x,y)), {interactive:false,fill:false,...opts}); };
-  rect(dtMin,{color:'#ffb000',weight:2.5,opacity:.95})
-    .bindTooltip(`Célula principal · ${Math.round(c.maxDbz)} dBZ`,{permanent:true,direction:'top',className:'tt'}).addTo(overlays);
+  const hail=c.maxDbz>=CFG.hailDbz;
+  rect(dtMin,{color:hail?'#ff5a3c':'#ffb000',weight:2.5,opacity:.95})
+    .bindTooltip(`Célula principal · ${Math.round(c.maxDbz)} dBZ${hail?' · posible granizo':''}`,{permanent:true,direction:'top',className:'tt'}).addTo(overlays);
+  if(c.trail && c.trail.length){ // estela: posiciones observadas en los fotogramas anteriores
+    const pts=c.trail.map(t=>pxToLatLng(g,t.x,t.y)).concat([pxToLatLng(g,c.x,c.y)]);
+    L.polyline(pts,{color:'#ffb000',weight:2,opacity:.55,interactive:false}).addTo(overlays);
+    c.trail.forEach((t,i)=>L.circleMarker(pxToLatLng(g,t.x,t.y),{radius:3,color:'#ffb000',fillColor:'#0b1220',fillOpacity:1,weight:1.5,opacity:.4+.5*i/c.trail.length,interactive:false}).bindTooltip(hhmm(t.time),{direction:'left',className:'tt',offset:[-4,0]}).addTo(overlays)); }
   if(!moving) return;
   [30,60,90].forEach((m,i)=>rect(dtMin+m,{color:'#ff5a3c',weight:1.5,dashArray:'5 5',opacity:.85-.22*i})
     .bindTooltip(`+${m} min`,{permanent:true,direction:'right',className:'tt'}).addTo(overlays));
@@ -662,6 +677,7 @@ async function refresh(force){
   }catch(e){ console.error(e); $('headline').textContent='Sin conexión con el radar'; $('sub').textContent=e.message; }
 }
 setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}),1000);
+setInterval(()=>{ if(S.analysis && !S.busy) render(S.analysis); }, 60e3); // cuenta atrás
 refresh(true);
 setInterval(()=>refresh(false), CFG.refreshMs);
 // Autoactualización: si GitHub Pages sirve una versión nueva de esta página, recargar (evita copias en caché en el móvil).
