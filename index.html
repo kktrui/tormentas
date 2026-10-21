@@ -48,6 +48,26 @@ button{font:inherit;font-size:13.5px;color:var(--fg);background:rgba(255,255,255
 button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 button.active{background:rgba(255,176,0,.18);border-color:var(--accent)}
 button.icon{flex:0 0 auto;padding:8px 12px}
+.btns button{flex:1 1 30%}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.chart{border:1px solid var(--line);border-radius:10px;padding:6px 8px;min-width:0}
+.chart small{display:block;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chart svg{display:block;width:100%;height:44px;margin-top:4px}
+.chart .cap{font-size:12px;color:var(--fg);margin-top:3px;line-height:1.25}
+.chart .cap.risk{color:var(--warn)}
+#mesaExit{display:none;position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px));z-index:1100;flex:none}
+body.mesa #mesaExit{display:block}
+body.mesa .btns,body.mesa .row,body.mesa .legend,body.mesa .leaflet-control-zoom,body.mesa header{display:none}
+body.mesa .verdict h2{font-size:34px}
+body.mesa .verdict p{font-size:17px}
+body.mesa .cell b{font-size:30px}
+body.mesa .cell small{font-size:13px}
+body.mesa #boltline{font-size:18px}
+body.mesa .chart svg{height:72px}
+body.mesa .chart .cap{font-size:15px}
+body.mesa .chart small{font-size:12px}
+body.mesa #sheet{gap:14px}
+@media (min-width:720px){body.mesa #sheet{width:600px}}
 #toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(52px + env(safe-area-inset-top,0px));z-index:1200;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px;max-width:92vw;transition:opacity .3s}
 #toast[hidden]{display:none}
 .legend{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px}
@@ -70,6 +90,7 @@ button.icon{flex:0 0 auto;padding:8px 12px}
 <div id="map" role="application" aria-label="Mapa de radar"></div>
 <header><h1>Tormentas · radar</h1><span class="clock" id="clock">—</span></header>
 <div id="toast" hidden></div>
+<button id="mesaExit" class="icon">✕ Salir del modo mesa</button>
 
 <section id="sheet" aria-live="polite">
   <div class="verdict">
@@ -79,7 +100,11 @@ button.icon{flex:0 0 auto;padding:8px 12px}
       <p id="sub">Descargando los últimos fotogramas de RainViewer.</p>
     </div>
   </div>
-  <div id="boltline" aria-live="polite"><span>⚡</span><span><b id="boltN">0</b> <span id="boltWord">rayos</span> en 15 min a menos de <b id="boltKm">50</b> km</span><small id="boltAge"></small></div>
+  <div id="boltline" aria-live="polite"><span>⚡</span><span><b id="boltN">0</b> <span id="boltWord">rayos</span> en 15 min a menos de <b id="boltKm">50</b> km<span id="boltCell"></span></span><small id="boltAge"></small></div>
+  <div class="charts">
+    <div class="chart"><small>Sobre ti · últimas 2 h</small><svg id="spark" viewBox="0 0 130 44" preserveAspectRatio="none" aria-hidden="true"></svg><div class="cap" id="sparkcap">—</div></div>
+    <div class="chart"><small>Próximas 12 h · Open-Meteo</small><svg id="omsvg" viewBox="0 0 130 44" preserveAspectRatio="none" aria-hidden="true"></svg><div class="cap" id="omtext">—</div></div>
+  </div>
   <div class="grid">
     <div class="cell"><small>Lluvia</small><b id="eLight">—</b></div>
     <div class="cell"><small>Fuerte</small><b id="eStrong">—</b></div>
@@ -95,6 +120,9 @@ button.icon{flex:0 0 auto;padding:8px 12px}
     <button id="gps">📍 Mi posición</button>
     <button id="pick">🏠 Fijar en el mapa</button>
     <button id="reload">↻ Actualizar</button>
+    <button id="sat">🛰 Satélite</button>
+    <button id="share">↗ Compartir</button>
+    <button id="mesa">🖥 Mesa</button>
   </div>
   <div class="legend"><span>Débil</span><i style="background:linear-gradient(90deg,#88ddee,#004768)"></i><i style="background:linear-gradient(90deg,#ffee00,#ff8100)"></i><i style="background:linear-gradient(90deg,#ff4400,#5d0000)"></i><i style="background:#ff6cff"></i><span>Extrema</span><span id="agenote" style="margin-left:auto"></span></div>
 </section>
@@ -143,7 +171,7 @@ let homeMarker = L.marker([S.pos.lat,S.pos.lng], { icon:homeIcon, keyboard:false
 let homeCircle = L.circle([S.pos.lat,S.pos.lng], { radius:CFG.radiusKm*1000, color:'#ffb000', weight:1, fill:false, dashArray:'4 4', interactive:false }).addTo(map);
 map.on('click', e => { if(!S.picking) return; S.picking=false; $('pick').classList.remove('active'); setPos({lat:e.latlng.lat, lng:e.latlng.lng, name:'Punto fijado'}); });
 
-function setPos(p){ S.pos=p; savePos(); homeMarker.setLatLng([p.lat,p.lng]); homeCircle.setLatLng([p.lat,p.lng]); map.panTo([p.lat,p.lng]); toast('Posición: '+p.name); analyze(); if(typeof boltRecenter==='function') boltRecenter(); }
+function setPos(p){ S.pos=p; savePos(); homeMarker.setLatLng([p.lat,p.lng]); homeCircle.setLatLng([p.lat,p.lng]); map.panTo([p.lat,p.lng]); toast('Posición: '+p.name); analyze(); if(typeof boltRecenter==='function') boltRecenter(); if(typeof loadOutlook==='function') loadOutlook(true); }
 
 // ---------- Fotogramas ----------
 async function fetchFrames(){
@@ -253,7 +281,23 @@ function motionVector(fields, g){
   return { dx, dy, score:sw/good.length, spread, pairs:good.length, all:vs };
 }
 function discOffsets(rPx){ const o=[]; for(let j=-rPx;j<=rPx;j++)for(let i=-rPx;i<=rPx;i++) if(i*i+j*j<=rPx*rPx) o.push([i,j]); return o; }
-function maxAt(F, x, y, disc){ let m=0; const xi=Math.round(x), yi=Math.round(y); if(xi<0||yi<0||xi>=W||yi>=W) return NaN; for(const [i,j] of disc){ const xx=xi+i, yy=yi+j; if(xx<0||yy<0||xx>=W||yy>=W) continue; const v=F[yy*W+xx]; if(v>m) m=v; } return m; }
+function maxIn(F, w, x, y, disc){ let m=0; const xi=Math.round(x), yi=Math.round(y); if(xi<0||yi<0||xi>=w||yi>=w) return NaN; for(const [i,j] of disc){ const xx=xi+i, yy=yi+j; if(xx<0||yy<0||xx>=w||yy>=w) continue; const v=F[yy*w+xx]; if(v>m) m=v; } return m; }
+function maxAt(F, x, y, disc){ return maxIn(F, W, x, y, disc); }
+async function loadTile(frame, tx, ty){ // una sola tesela de 512 px → dBZ
+  const c=document.createElement('canvas'); c.width=c.height=TS; const ctx=c.getContext('2d',{willReadFrequently:true});
+  const im=await loadImg(`${S.host}${frame.path}/${TS}/${Z}/${tx}/${ty}/2/0_0.png`); ctx.drawImage(im,0,0);
+  const d=ctx.getImageData(0,0,TS,TS).data, f=new Float32Array(TS*TS);
+  for(let p=0,q=0;p<f.length;p++,q+=4) f[p]=dbzOf(d[q],d[q+1],d[q+2],d[q+3]); return f;
+}
+S.sparkCache=new Map();
+async function discMaxForFrame(frame, g, field){ // máximo dBZ en el disco alrededor de la posición, para un fotograma
+  const key=`${frame.path}|${g.tx0},${g.ty0},${Math.round(g.px)},${Math.round(g.py)}`;
+  if(S.sparkCache.has(key)) return S.sparkCache.get(key);
+  const disc=discOffsets(Math.max(2,Math.round(CFG.radiusKm/g.kmPerPx))); let v;
+  if(field) v=maxAt(field,g.px,g.py,disc);
+  else { const ix=g.px>=TS?1:0, iy=g.py>=TS?1:0; try{ const f=await loadTile(frame,g.tx0+ix,g.ty0+iy); v=maxIn(f,TS,g.px-ix*TS,g.py-iy*TS,disc); }catch(e){ v=NaN; } }
+  if(Number.isNaN(v)) v=0; S.sparkCache.set(key,v); if(S.sparkCache.size>300) S.sparkCache.delete(S.sparkCache.keys().next().value); return v;
+}
 function etaSeries(F, v, g){
   const disc=discOffsets(Math.max(2,Math.round(CFG.radiusKm/g.kmPerPx)));
   const out=[];
@@ -287,8 +331,10 @@ async function analyze(){
   S.busy=true;
   try{
     const g=gridFor(S.pos); S.grid=g;
-    const past=S.frames.filter(f=>f.kind==='past').slice(-CFG.analysisFrames);
+    const allPast=S.frames.filter(f=>f.kind==='past');
+    const past=allPast.slice(-CFG.analysisFrames);
     const fields=await Promise.all(past.map(f=>loadField(f,g)));
+    const fieldOf=new Map(past.map((f,i)=>[f.path,fields[i]]));
     const F=fields[fields.length-1];
     let rainPx=0; for(let i=0;i<F.length;i++) if(F[i]>=CFG.thr.light) rainPx++;
     const v = rainPx>=CFG.minRainPx ? motionVector(fields,g) : null;
@@ -317,6 +363,9 @@ async function analyze(){
       res.conf = (v.score>0.6 && consistency<0.35 && v.pairs>=3) ? 'alta' : (v.score>0.45 && consistency<0.6) ? 'media' : 'baja';
     }
     S.analysis=res; render(res); const cur=S.playList[S.idx]; draw(res, cur?(cur.time-res.frameTime)/60:0);
+    // Sparkline: máximo sobre la posición en cada uno de los fotogramas de las últimas 2 h (teselas sueltas para los antiguos).
+    res.spark=await Promise.all(allPast.map(f=>discMaxForFrame(f,g,fieldOf.get(f.path)||null)));
+    res.sparkTimes=allPast.map(f=>f.time); renderSpark(res);
   }catch(e){ console.error(e); $('headline').textContent='No se pudo analizar el radar'; $('sub').textContent=e.message; $('dot').className='dot'; }
   finally{ S.busy=false; if(S.rerun){ S.rerun=false; analyze(); } }
 }
@@ -373,6 +422,106 @@ function draw(r, dtMin){
   L.circleMarker(at(dtMin),{radius:4,color:'#ffb000',fillColor:'#ffb000',fillOpacity:1,weight:1,interactive:false}).addTo(overlays);
 }
 
+// ---------- Sparkline sobre la posición ----------
+function renderSpark(r){
+  const svg=$('spark'), vals=r.spark||[], n=vals.length;
+  if(n<2){ svg.innerHTML=''; $('sparkcap').textContent='—'; return; }
+  const W2=130, H=44, x=i=>(i/(n-1))*W2, y=v=>H-2-Math.min(60,v)/60*(H-6);
+  const d='M'+vals.map((v,i)=>`${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' L');
+  const last=vals[n-1], prev=vals[Math.max(0,n-3)], mx=Math.max(...vals);
+  const col=last>=45?'#ff5a3c':last>=35?'#ffb000':last>=15?'#4fc3f7':'#8fa0bd';
+  svg.innerHTML=`<line x1="0" x2="${W2}" y1="${y(15).toFixed(1)}" y2="${y(15).toFixed(1)}" stroke="rgba(255,255,255,.14)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>`+
+    `<line x1="0" x2="${W2}" y1="${y(35).toFixed(1)}" y2="${y(35).toFixed(1)}" stroke="rgba(255,176,0,.35)" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>`+
+    `<path d="${d} L${W2} ${H} L0 ${H} Z" fill="${col}" opacity=".18"/><path d="${d}" fill="none" stroke="${col}" stroke-width="1.8" vector-effect="non-scaling-stroke"/>`+
+    `<circle cx="${x(n-1).toFixed(1)}" cy="${y(last).toFixed(1)}" r="2.5" fill="${col}" vector-effect="non-scaling-stroke"/>`;
+  let txt;
+  if(mx<5) txt=`Nada sobre ti desde las ${hhmm(r.sparkTimes[0])}`;
+  else if(last<15) txt=`Ahora seco · máximo 2 h: ${Math.round(mx)} dBZ`;
+  else { const lvl=last>=45?'muy fuerte':last>=35?'fuerte':'lluvia'; const tr=last-prev>5?'va a más':last-prev<-5?'va a menos':'estable'; txt=`Ahora ${lvl} (${Math.round(last)} dBZ), ${tr}`; }
+  $('sparkcap').textContent=txt;
+}
+
+// ---------- Próximas 12 h (Open-Meteo, gratis y sin clave) ----------
+async function loadOutlook(force){
+  const key=`${S.pos.lat.toFixed(2)},${S.pos.lng.toFixed(2)}`;
+  if(!force && S.outlookKey===key && S.outlookAt && Date.now()-S.outlookAt<30*60e3) return;
+  try{
+    const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${S.pos.lat.toFixed(3)}&longitude=${S.pos.lng.toFixed(3)}&hourly=precipitation_probability,precipitation,cape,weather_code&forecast_hours=12&timezone=auto`);
+    if(!r.ok) throw new Error('Open-Meteo '+r.status);
+    const j=await r.json(); S.outlook=j.hourly; S.outlookKey=key; S.outlookAt=Date.now(); renderOutlook();
+  }catch(e){ console.error(e); $('omtext').textContent='Previsión no disponible'; }
+}
+function renderOutlook(){
+  const h=S.outlook; if(!h||!h.time) return;
+  const n=h.time.length, w=130/n; let out='', storm=[], rain=[], maxP=0, maxC=0;
+  for(let i=0;i<n;i++){
+    const p=h.precipitation_probability[i]??0, c=h.cape[i]??0, code=h.weather_code[i]??0, mm=h.precipitation[i]??0;
+    maxP=Math.max(maxP,p); maxC=Math.max(maxC,c);
+    const isStorm=code>=95||(c>=800&&p>=30), isRain=!isStorm&&(p>=50||mm>=0.5);
+    if(isStorm) storm.push(i); else if(isRain) rain.push(i);
+    const col=isStorm?'#ff5a3c':isRain?'#4fc3f7':'#44536e', hh=Math.max(2,p/100*38);
+    out+=`<rect x="${(i*w+1).toFixed(1)}" y="${(44-hh).toFixed(1)}" width="${(w-2).toFixed(1)}" height="${hh.toFixed(1)}" rx="1" fill="${col}"/>`;
+    if(c>=800) out+=`<rect x="${(i*w+1).toFixed(1)}" y="0" width="${(w-2).toFixed(1)}" height="2.5" fill="#ffb000"/>`;
+  }
+  $('omsvg').innerHTML=out;
+  const hr=i=>h.time[i].slice(11,13)+' h', span=a=>a.length===1?hr(a[0]):`${hr(a[0])}–${hr(a[a.length-1])}`;
+  let t; if(storm.length) t=`Riesgo de tormenta ${span(storm)} · máx ${maxP} %, CAPE ${Math.round(maxC)}`;
+  else if(rain.length) t=`Lluvia probable ${span(rain)} · máx ${maxP} %`;
+  else t=`Sin lluvia prevista · máx ${maxP} %${maxC>=800?' · CAPE alto':''}`;
+  $('omtext').textContent=t; $('omtext').classList.toggle('risk',storm.length>0);
+}
+
+// ---------- Satélite Meteosat (EUMETSAT View, WMS gratuito) ----------
+const SAT_WMS='https://view.eumetsat.int/geoserver/wms';
+const sat={ on:false, img:null, rdt:null };
+function sunUp(lat,lng){ // elevación solar aproximada > -3° → de día
+  const n=Date.now()/864e5-10957.5, L=(280.46+0.9856474*n)%360, g=(357.528+0.9856003*n)*Math.PI/180;
+  const lam=(L+1.915*Math.sin(g)+0.02*Math.sin(2*g))*Math.PI/180, eps=23.439*Math.PI/180;
+  const dec=Math.asin(Math.sin(eps)*Math.sin(lam)), ra=Math.atan2(Math.cos(eps)*Math.sin(lam),Math.cos(lam));
+  const gmst=((18.697374558+24.06570982441908*n)%24+24)%24, ha=(gmst*15+lng)*Math.PI/180-ra, la=lat*Math.PI/180;
+  return Math.asin(Math.sin(la)*Math.sin(dec)+Math.cos(la)*Math.cos(dec)*Math.cos(ha))>-0.05;
+}
+function satLayerName(){ return sunUp(S.pos.lat,S.pos.lng)?'msg_fes:rgb_convection':'mtg_fd:ir105_hrfi'; }
+function satToggle(on){
+  sat.on=on; $('sat').classList.toggle('active',on); try{ localStorage.setItem('tormentas.sat',on?'1':'0'); }catch(e){}
+  if(on){
+    if(!sat.img){
+      sat.img=L.tileLayer.wms(SAT_WMS,{layers:satLayerName(),format:'image/png',transparent:true,version:'1.3.0',opacity:.55,zIndex:4,attribution:'satélite © EUMETSAT'});
+      sat.rdt=L.tileLayer.wms(SAT_WMS,{layers:'msg_fes:rdt',format:'image/png',transparent:true,version:'1.3.0',opacity:.9,zIndex:6});
+    } else sat.img.setParams({layers:satLayerName(),_t:Date.now()});
+    sat.img.addTo(map); sat.rdt.addTo(map);
+    toast(sunUp(S.pos.lat,S.pos.lng)?'Meteosat: RGB de convección (naranja = nubes de tormenta) y células en desarrollo (contornos rojos). Cada 15 min.':'Meteosat: infrarrojo nocturno (claro = topes fríos) y células en desarrollo (contornos rojos). Cada 15 min.',6000);
+  } else if(sat.img){ map.removeLayer(sat.img); map.removeLayer(sat.rdt); }
+}
+$('sat').onclick=()=>satToggle(!sat.on);
+setInterval(()=>{ if(sat.on){ sat.img.setParams({layers:satLayerName(),_t:Date.now()}); sat.rdt.setParams({_t:Date.now()}); } }, 10*60e3);
+try{ if(localStorage.getItem('tormentas.sat')==='1') satToggle(true); }catch(e){}
+
+// ---------- Compartir ----------
+$('share').onclick=async()=>{
+  const lines=[$('headline').textContent, $('sub').textContent];
+  if($('boltline').classList.contains('on')) lines.push('⚡ '+$('boltline').innerText.replace(/\s+/g,' ').trim());
+  if(S.outlook) lines.push('Próximas 12 h: '+$('omtext').textContent);
+  lines.push(location.href.split('#')[0]);
+  const text=lines.join('\n');
+  try{ if(navigator.share){ await navigator.share({title:'Tormentas · radar', text}); return; } }catch(e){ if(e&&e.name==='AbortError') return; }
+  try{ await navigator.clipboard.writeText(text); toast('Resumen copiado al portapapeles'); }catch(e){ toast('No se pudo compartir en este navegador'); }
+};
+
+// ---------- Modo mesa ----------
+let wakeLock=null;
+async function wakeOn(){ try{ if('wakeLock' in navigator && !wakeLock){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{ wakeLock=null; }); } }catch(e){} }
+function wakeOff(){ try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null; }
+function setMesa(on){
+  document.body.classList.toggle('mesa',on); $('mesa').classList.toggle('active',on);
+  if(on){ wakeOn(); if(location.hash!=='#mesa') history.replaceState(null,'','#mesa'); toast('Modo mesa: letras grandes y pantalla encendida. ✕ para salir.'); }
+  else { wakeOff(); if(location.hash==='#mesa') history.replaceState(null,'',location.pathname); }
+  setTimeout(()=>map.invalidateSize(),50);
+}
+$('mesa').onclick=()=>setMesa(!document.body.classList.contains('mesa'));
+$('mesaExit').onclick=()=>setMesa(false);
+if(location.hash==='#mesa') setMesa(true);
+
 // ---------- Rayos (Blitzortung, tiempo real) ----------
 // Flujo público de Blitzortung.org (uso personal, no comercial). Protocolo no oficial: si cambia, la capa se apaga sola.
 const bolts=L.layerGroup().addTo(map);
@@ -410,11 +559,57 @@ function boltRender(force){
   const keepMs=CFG.boltKeepMin*60e3; let near=0, last=null;
   B.list=B.list.filter(b=>{ const age=(now-b.t)/60e3; if(age>CFG.boltKeepMin){ bolts.removeLayer(b.mk); return false; }
     b.mk.setIcon(boltIcon(age)); if(b.d<=CFG.boltNearKm && age<=15){ near++; if(!last||b.t>last) last=b.t; } return true; });
+  const cells=boltCells(); drawCells(cells);
   const line=$('boltline'); const any=B.list.some(b=>b.d<=150);
-  line.classList.toggle('on', any||near>0);
+  const best=cells.find(c=>c.d<=250)||null;
+  line.classList.toggle('on', any||near>0||!!best);
   $('boltN').textContent=near; $('boltWord').textContent=near===1?'rayo':'rayos'; $('boltKm').textContent=CFG.boltNearKm;
   $('boltAge').textContent = last ? `último hace ${Math.max(0,Math.round((now-last)/60e3))} min` : (any ? `rayos a <150 km` : '');
-  const dot=$('dot'); if(near>=3){ dot.className='dot bad'; } 
+  let ct='';
+  if(best){ const tr=best.trend==='up'?'intensificándose':best.trend==='down'?'debilitándose':'estable';
+    if(best.approaching) ct=` · Célula eléctrica a ${Math.round(best.d)} km, se acerca a ${Math.round(best.v.speed)} km/h, ${tr} (${best.rate.toFixed(1)}/min) · llega en ~${fmtMin(best.eta)}`;
+    else if(best.v && best.v.speed>=5) ct=` · Célula eléctrica a ${Math.round(best.d)} km hacia el ${dirName(best.v.bearing)}, ${tr}: no viene hacia aquí`;
+    else ct=` · Célula eléctrica a ${Math.round(best.d)} km, ${tr} (${best.rate.toFixed(1)}/min), rumbo aún sin determinar`; }
+  $('boltCell').textContent=ct;
+  const dot=$('dot'); if(near>=3 || (best&&best.approaching&&best.eta<=30)){ dot.className='dot bad'; } 
+}
+const cellsLayer=L.layerGroup().addTo(map);
+function bearingDeg(a,b){ const f1=a.lat*Math.PI/180, f2=b.lat*Math.PI/180, dl=(b.lon-a.lon)*Math.PI/180;
+  return (Math.atan2(Math.sin(dl)*Math.cos(f2), Math.cos(f1)*Math.sin(f2)-Math.sin(f1)*Math.cos(f2)*Math.cos(dl))*180/Math.PI+360)%360; }
+function centroid(arr){ const n=arr.length; return { lat:arr.reduce((s,p)=>s+p.lat,0)/n, lon:arr.reduce((s,p)=>s+p.lon,0)/n, t:arr.reduce((s,p)=>s+p.t,0)/n }; }
+function boltCells(){
+  // Células eléctricas: agrupación de los rayos de los últimos 15 min (radio 20 km), ritmo, tendencia, rumbo y ETA.
+  const now=Date.now(), pts=B.list.filter(b=>now-b.t<=15*60e3), R=20, cl=[];
+  for(const p of pts){ let best=null, bd=R; for(const c of cl){ const d=kmBetween(c.lat,c.lon,p.lat,p.lon); if(d<bd){ bd=d; best=c; } }
+    if(best){ best.pts.push(p); const n=best.pts.length; best.lat+=(p.lat-best.lat)/n; best.lon+=(p.lon-best.lon)/n; } else cl.push({lat:p.lat,lon:p.lon,pts:[p]}); }
+  const merged=[]; for(const c of cl){ const m=merged.find(o=>kmBetween(o.lat,o.lon,c.lat,c.lon)<R); if(m){ m.pts.push(...c.pts); const ce=centroid(m.pts); m.lat=ce.lat; m.lon=ce.lon; } else merged.push(c); }
+  const cells=[];
+  for(const c of merged){
+    if(c.pts.length<8) continue;
+    const last5=c.pts.filter(p=>now-p.t<=5*60e3).length, prev5=c.pts.filter(p=>now-p.t>5*60e3&&now-p.t<=10*60e3).length;
+    const trend= last5>=prev5*1.3 && last5>=3 ? 'up' : last5<=prev5*0.7 ? 'down' : 'flat';
+    const old=c.pts.filter(p=>now-p.t>7.5*60e3), rec=c.pts.filter(p=>now-p.t<=7.5*60e3); let v=null;
+    if(old.length>=5 && rec.length>=5){ const a=centroid(old), b=centroid(rec), dtH=(b.t-a.t)/3600e3; if(dtH>0.03) v={ speed:kmBetween(a.lat,a.lon,b.lat,b.lon)/dtH, bearing:bearingDeg(a,b) }; }
+    const d=kmBetween(S.pos.lat,S.pos.lng,c.lat,c.lon), toUser=bearingDeg(c,{lat:S.pos.lat,lon:S.pos.lng});
+    let eta=null, approaching=false;
+    if(v && v.speed>=5 && v.speed<=150){ const rel=(((v.bearing-toUser)+540)%360-180)*Math.PI/180; const closest=Math.abs(d*Math.sin(rel)), along=d*Math.cos(rel);
+      if(along>0 && closest<=20){ approaching=true; eta=along/v.speed*60; } }
+    const spread=Math.max(5, 1.5*Math.sqrt(c.pts.reduce((s,p)=>s+kmBetween(c.lat,c.lon,p.lat,p.lon)**2,0)/c.pts.length));
+    cells.push({ lat:c.lat, lon:c.lon, n:c.pts.length, rate:last5/5, trend, v, d, eta, approaching, spread });
+  }
+  cells.sort((a,b)=>(a.eta??1e9)-(b.eta??1e9) || a.d-b.d);
+  return cells;
+}
+function drawCells(cells){
+  cellsLayer.clearLayers();
+  for(const c of cells){
+    const col=c.trend==='up'?'#ff5a3c':'#ffb000', arrow=c.trend==='up'?'↑':c.trend==='down'?'↓':'→';
+    L.circle([c.lat,c.lon],{radius:c.spread*1000,color:col,weight:2,dashArray:'4 4',fillColor:col,fillOpacity:.08,interactive:false})
+      .bindTooltip(`⚡ ${c.rate.toFixed(1)}/min ${arrow} · ${Math.round(c.d)} km`,{permanent:true,direction:'top',className:'tt'}).addTo(cellsLayer);
+    if(c.v && c.v.speed>=5){ const km=c.v.speed*0.5, br=c.v.bearing*Math.PI/180; // flecha de 30 min
+      const lat2=c.lat+km/111*Math.cos(br), lon2=c.lon+km/(111*Math.cos(c.lat*Math.PI/180))*Math.sin(br);
+      L.polyline([[c.lat,c.lon],[lat2,lon2]],{color:col,weight:3,opacity:.9,interactive:false}).addTo(cellsLayer); }
+  }
 }
 function boltRecenter(){ // al cambiar de posición, recalcular distancias y descartar los lejanos
   B.list=B.list.filter(b=>{ b.d=kmBetween(S.pos.lat,S.pos.lng,b.lat,b.lon); if(b.d>CFG.boltRangeKm){ bolts.removeLayer(b.mk); return false; } return true; });
@@ -441,12 +636,13 @@ async function refresh(force){
   try{
     const before=S.lastGen; await fetchFrames();
     if(force || S.lastGen!==before || !S.playList.length){ rebuildLayers(); if(S.playing){ clearTimeout(S.timer); tick(); } await analyze(); }
+    loadOutlook(false);
   }catch(e){ console.error(e); $('headline').textContent='Sin conexión con el radar'; $('sub').textContent=e.message; }
 }
 setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}),1000);
 refresh(true);
 setInterval(()=>refresh(false), CFG.refreshMs);
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ refresh(false); boltConnect(); boltRender(true); } });
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ refresh(false); boltConnect(); boltRender(true); if(document.body.classList.contains('mesa')) wakeOn(); } });
 </script>
 </body>
 </html>
