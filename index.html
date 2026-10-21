@@ -104,6 +104,7 @@ const CFG = {
   playFrames: 7,         // fotogramas animados (última hora)
   refreshMs: 5 * 60e3,
   minRainPx: 150,        // píxeles con lluvia mínimos para fiarse del vector
+  nearKm: 300,           // solo se marca célula principal si está más cerca que esto o si te alcanza
   sigmaKm: 180,          // peso gaussiano alrededor de la posición al correlar
 };
 const DEFAULT_POS = { lat: 39.5696, lng: 2.6502, name: 'Palma (por defecto)' };
@@ -160,6 +161,7 @@ function showFrame(i){
   $('slider').value = S.idx;
   const f=S.playList[S.idx];
   $('ftime').textContent = hhmm(f.time) + (f.kind==='nowcast'?' ▸':'');
+  if(S.analysis) draw(S.analysis, (f.time-S.analysis.frameTime)/60);
 }
 function hhmm(t){ return new Date(t*1000).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}); }
 function tick(){
@@ -248,13 +250,24 @@ function etaSeries(F, v, g){
   for(let t=0;t<=CFG.horizonMin;t++){ out.push(maxAt(F, g.px-v.dx*t/10, g.py-v.dy*t/10, disc)); }
   return out;
 }
-function nearestCell(F, g, thr){
-  let best=null, bd=Infinity;
-  for(let y=0;y<W;y+=2)for(let x=0;x<W;x+=2){ if(F[y*W+x]>=thr){ const d=(x-g.px)**2+(y-g.py)**2; if(d<bd){bd=d;best=[x,y];} } }
-  if(!best) return null;
-  const R=Math.round(25/g.kmPerPx); let sx=0,sy=0,n=0;
-  for(let y=Math.max(0,best[1]-R);y<Math.min(W,best[1]+R);y++)for(let x=Math.max(0,best[0]-R);x<Math.min(W,best[0]+R);x++){ if(F[y*W+x]>=thr){sx+=x;sy+=y;n++;} }
-  return { x:sx/n, y:sy/n, distKm:Math.sqrt(bd)*g.kmPerPx };
+function findCell(F, g, v){
+  // Célula principal: entre los ecos fuertes (≥35 dBZ), la que con el vector actual pasa más cerca de la posición
+  // (desempate por distancia). Si no hay ecos fuertes, el eco ≥30 más cercano; si tampoco, el ≥15 más cercano.
+  const hv=v?Math.hypot(v.dx,v.dy):0, tmax=CFG.horizonMin/10;
+  const pick=(thr,useCourse)=>{ let best=null;
+    for(let y=0;y<W;y+=3)for(let x=0;x<W;x+=3){ const d=F[y*W+x]; if(d<thr) continue;
+      const rx=g.px-x, ry=g.py-y, dist=Math.hypot(rx,ry); let score=dist;
+      if(useCourse && hv>0.5){ let t=(rx*v.dx+ry*v.dy)/(hv*hv); t=Math.max(0,Math.min(tmax,t)); score=Math.hypot(x+v.dx*t-g.px, y+v.dy*t-g.py)+0.15*dist; }
+      if(!best||score<best.score) best={x,y,score,thr}; }
+    return best; };
+  const seed=pick(CFG.thr.strong,true)||pick(30,false)||pick(CFG.thr.light,false);
+  if(!seed) return null;
+  const thr=Math.min(seed.thr,30), R=Math.round(30/g.kmPerPx);
+  let sx=0,sy=0,n=0,mx=0,x0=W,y0=W,x1=0,y1=0;
+  for(let y=Math.max(0,seed.y-R);y<=Math.min(W-1,seed.y+R);y++)for(let x=Math.max(0,seed.x-R);x<=Math.min(W-1,seed.x+R);x++){
+    const d=F[y*W+x]; if(d<thr) continue; sx+=x;sy+=y;n++; if(d>mx)mx=d; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  const pad=Math.round(3/g.kmPerPx);
+  return { x:sx/n, y:sy/n, x0:x0-pad, y0:y0-pad, x1:x1+pad, y1:y1+pad, maxDbz:mx, distKm:Math.hypot(sx/n-g.px, sy/n-g.py)*g.kmPerPx, strong:seed.thr>=CFG.thr.strong };
 }
 
 // ---------- Análisis ----------
@@ -272,6 +285,8 @@ async function analyze(){
     const latest=past[past.length-1];
     const ageMin=Math.max(0,(Date.now()/1000-latest.time)/60);
     const res={ g, F, v, rainPx, ageMin, frameTime:latest.time };
+    let nearPx=0; { const R2=(CFG.nearKm/g.kmPerPx)**2; for(let y=0;y<W;y+=2)for(let x=0;x<W;x+=2){ if(F[y*W+x]>=CFG.thr.light && (x-g.px)**2+(y-g.py)**2<=R2) nearPx++; } }
+    res.nearPx=nearPx*4;
     if(v){
       const sp=Math.hypot(v.dx,v.dy)*g.kmPerPx*6; // km/h
       res.speedKmh=sp; res.bearing=(Math.atan2(v.dx,-v.dy)*180/Math.PI+360)%360;
@@ -284,11 +299,14 @@ async function analyze(){
       res.eta={ light:first(CFG.thr.light), strong:first(CFG.thr.strong), severe:first(CFG.thr.severe) };
       if(res.eta.light!=null){ let e=res.eta.light+a0; while(e<res.lastValid && res.series[e]>=CFG.thr.light) e++; res.endLight=e-a0; res.endOpen=(e>=res.lastValid); }
       res.now=res.series[a0];
-      res.cell=nearestCell(F,g,30)||nearestCell(F,g,CFG.thr.light);
+      res.cell=findCell(F,g,v);
+      // Célula lejana que no viene hacia aquí: no se marca, para no señalar tormentas de otra región.
+      res.far = res.nearPx<CFG.minRainPx && res.eta.light==null;
+      if(res.far) res.cell=null;
       const consistency = v.spread/Math.max(1,Math.hypot(v.dx,v.dy));
       res.conf = (v.score>0.6 && consistency<0.35 && v.pairs>=3) ? 'alta' : (v.score>0.45 && consistency<0.6) ? 'media' : 'baja';
     }
-    S.analysis=res; render(res); draw(res);
+    S.analysis=res; render(res); const cur=S.playList[S.idx]; draw(res, cur?(cur.time-res.frameTime)/60:0);
   }catch(e){ console.error(e); $('headline').textContent='No se pudo analizar el radar'; $('sub').textContent=e.message; $('dot').className='dot'; }
   finally{ S.busy=false; if(S.rerun){ S.rerun=false; analyze(); } }
 }
@@ -300,7 +318,8 @@ function render(r){
   $('agenote').textContent=`radar de las ${hhmm(r.frameTime)} (hace ${age} min)`;
   const adj=t=>t; // los ETA ya son relativos a ahora
   let head, sub, cls;
-  if(r.rainPx<CFG.minRainPx){ head='Sin precipitación relevante en unos 400 km'; sub='El radar no muestra ecos significativos alrededor de tu posición.'; cls='ok'; }
+  if(r.rainPx<CFG.minRainPx){ head='Sin precipitación relevante en unos 450 km'; sub='El radar no muestra ecos significativos alrededor de tu posición.'; cls='ok'; }
+  else if(r.v && r.far){ head=`Sin lluvia a menos de ${CFG.nearKm} km`; sub=`Hay ecos más lejos (se mueven hacia el ${dirName(r.bearing)} a ${Math.round(r.speedKmh)} km/h) pero con ese rumbo no te alcanzan en ${fmtMin(r.horizon)}.`; cls='ok'; }
   else if(!r.v){ head='Hay lluvia cerca, pero no se puede estimar el rumbo'; sub='Los fotogramas no son coherentes entre sí. Mira la animación.'; cls='warn'; }
   else{
     const from=dirName((r.bearing+180)%360), to=dirName(r.bearing);
@@ -310,7 +329,7 @@ function render(r){
     else if(r.now>=CFG.thr.light){ head='Ya llueve sobre tu posición'; cls='warn'; if(r.eta.strong!=null) head+=` · fuerte en ${fmtMin(adj(r.eta.strong))}`; }
     else if(r.eta.strong!=null){ head=`Lluvia fuerte en ${fmtMin(adj(r.eta.strong))}`; cls=adj(r.eta.strong)<30?'bad':'warn'; }
     else if(r.eta.light!=null){ head=`Lluvia en ${fmtMin(adj(r.eta.light))}, sin ecos fuertes en tu ruta`; cls='warn'; }
-    else{ head=`Con el rumbo actual no te afecta en ${fmtMin(r.horizon)}`; cls='ok'; if(r.horizon<CFG.horizonMin-20) sub+=' (límite de la ventana del radar).'; if(r.cell) sub+=` Eco más cercano a ${Math.round(r.cell.distKm)} km.`; }
+    else{ head=`Con el rumbo actual no te afecta en ${fmtMin(r.horizon)}`; cls='ok'; if(r.horizon<CFG.horizonMin-20) sub+=' (límite de la ventana del radar).'; if(r.cell) sub+=` Célula principal a ${Math.round(r.cell.distKm)} km.`; }
     if(r.endLight!=null && r.eta.light!=null) sub+=r.endOpen?` Lluvia durante más de ${fmtMin(r.endLight-r.eta.light)}.`:` Duración estimada ${fmtMin(r.endLight-r.eta.light)}.`;
     if(r.conf==='baja') sub+=' Tormentas de formación local: fíate más de la animación que del número.';
   }
@@ -320,22 +339,27 @@ function render(r){
   $('eSevere').textContent = r.v?fmtMin(adj(r.eta.severe)):'—';
   $('eDir').textContent = r.v?(r.speedKmh<6?'estac.':`${dirName(r.bearing)} ${Math.round(r.speedKmh)}`):'—';
 }
-function draw(r){
+function draw(r, dtMin){
+  // dtMin: minutos del fotograma mostrado respecto al analizado (negativo en fotogramas antiguos).
   overlays.clearLayers();
-  if(!r.v || !r.cell || r.speedKmh<6) return;
-  const g=r.g, v=r.v;
-  const minutes=[0,30,60,90];
-  const pts=minutes.map(m=>pxToLatLng(g, r.cell.x+v.dx*m/10, r.cell.y+v.dy*m/10));
-  // trayectoria 90 min punteada + flecha de 30 min
-  L.polyline(pts,{color:'#ff5a3c',weight:2,dashArray:'6 6',opacity:.8,interactive:false}).addTo(overlays);
-  L.polyline([pts[0],pts[1]],{color:'#ff5a3c',weight:4,opacity:.95,interactive:false}).addTo(overlays);
-  const ang=Math.atan2(v.dy,v.dx), hl=18/g.kmPerPx*1; // cabeza ≈ 18 km
-  const tipx=r.cell.x+v.dx*3, tipy=r.cell.y+v.dy*3;
+  if(!r.v || !r.cell) return;
+  const g=r.g, v=r.v, c=r.cell; dtMin=dtMin||0;
+  const moving=r.speedKmh>=6;
+  const rect=(t,opts)=>{ const ox=moving?v.dx*t/10:0, oy=moving?v.dy*t/10:0;
+    return L.polygon([[c.x0+ox,c.y0+oy],[c.x1+ox,c.y0+oy],[c.x1+ox,c.y1+oy],[c.x0+ox,c.y1+oy]].map(([x,y])=>pxToLatLng(g,x,y)), {interactive:false,fill:false,...opts}); };
+  rect(dtMin,{color:'#ffb000',weight:2.5,opacity:.95})
+    .bindTooltip(`Célula principal · ${Math.round(c.maxDbz)} dBZ`,{permanent:true,direction:'top',className:'tt'}).addTo(overlays);
+  if(!moving) return;
+  [30,60,90].forEach((m,i)=>rect(dtMin+m,{color:'#ff5a3c',weight:1.5,dashArray:'5 5',opacity:.85-.22*i})
+    .bindTooltip(`+${m} min`,{permanent:true,direction:'right',className:'tt'}).addTo(overlays));
+  const at=t=>pxToLatLng(g, c.x+v.dx*t/10, c.y+v.dy*t/10);
+  L.polyline([at(dtMin),at(dtMin+90)],{color:'#ff5a3c',weight:2,dashArray:'6 6',opacity:.8,interactive:false}).addTo(overlays);
+  L.polyline([at(dtMin),at(dtMin+30)],{color:'#ff5a3c',weight:4,opacity:.95,interactive:false}).addTo(overlays);
+  const ang=Math.atan2(v.dy,v.dx), hl=12/g.kmPerPx, tipx=c.x+v.dx*(dtMin+30)/10, tipy=c.y+v.dy*(dtMin+30)/10;
   const h1=pxToLatLng(g, tipx-hl*Math.cos(ang-0.5), tipy-hl*Math.sin(ang-0.5));
   const h2=pxToLatLng(g, tipx-hl*Math.cos(ang+0.5), tipy-hl*Math.sin(ang+0.5));
-  L.polyline([h1,pts[1],h2],{color:'#ff5a3c',weight:4,opacity:.95,interactive:false}).addTo(overlays);
-  for(let i=1;i<pts.length;i++) L.circleMarker(pts[i],{radius:3,color:'#ff5a3c',fillColor:'#0b1220',fillOpacity:1,weight:2,interactive:false}).bindTooltip(`+${minutes[i]} min`,{permanent:true,direction:'right',className:'tt',offset:[6,0]}).addTo(overlays);
-  L.circleMarker(pts[0],{radius:5,color:'#ff5a3c',fillColor:'#ff5a3c',fillOpacity:.9,weight:1,interactive:false}).addTo(overlays);
+  L.polyline([h1,at(dtMin+30),h2],{color:'#ff5a3c',weight:4,opacity:.95,interactive:false}).addTo(overlays);
+  L.circleMarker(at(dtMin),{radius:4,color:'#ffb000',fillColor:'#ffb000',fillOpacity:1,weight:1,interactive:false}).addTo(overlays);
 }
 
 // ---------- Botones ----------
