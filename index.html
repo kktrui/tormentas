@@ -475,7 +475,7 @@ function render(r){
     else if(r.now>=CFG.thr.light){ head='Ya llueve sobre tu posición'; cls='warn'; if(r.eta.strong!=null) head+=` · fuerte en ${fmtMin(adj(r.eta.strong))}`; }
     else if(r.eta.strong!=null){ head=`Lluvia fuerte en ${fmtMin(adj(r.eta.strong))}`; cls=adj(r.eta.strong)<30?'bad':'warn'; }
     else if(r.eta.light!=null){ head=`Lluvia en ${fmtMin(adj(r.eta.light))}, sin ecos fuertes en tu ruta`; cls='warn'; }
-    else{ head=`Con el rumbo actual no te afecta en ${fmtMin(adj(r.horizon))}`; cls='ok'; if(r.horizon<CFG.horizonMin-20) sub+=' (límite de la ventana del radar).'; if(r.cell) sub+=` Célula principal a ${Math.round(r.cell.distKm)} km.`; }
+    else{ head=`Con el rumbo actual no te afecta en ${fmtMin(adj(r.horizon))}`; cls='ok'; if(r.horizon<CFG.horizonMin-20) sub+=' (límite de la ventana del radar).'; if(r.cell){ const cv=cellVelocity(r); sub+=` Célula principal a ${Math.round(r.cell.distKm)} km, ${cv.kmh<3?'casi parada':`va hacia el ${dirName(cv.bearing)} a ${Math.round(cv.kmh)} km/h`}${cv.src==='célula'||cv.kmh<3?'':' (estimación provisional)'}.`; } }
     if(r.cell && r.cell.maxDbz>=CFG.hailDbz) sub+=` Ecos de ${Math.round(r.cell.maxDbz)} dBZ en la célula: posible granizo.`;
     if(r.endLight!=null && r.eta.light!=null) sub+=r.endOpen?` Lluvia durante más de ${fmtMin(r.endLight-r.eta.light)}.`:` Duración estimada ${fmtMin(r.endLight-r.eta.light)}.`;
     if(r.conf==='baja') sub+=' Tormentas de formación local: fíate más de la animación que del número.';
@@ -487,12 +487,25 @@ function render(r){
   $('eSevere').textContent = r.v?fmtMin(adj(r.eta.severe)):'—';
   $('eDir').textContent = r.v?(r.speedKmh<6?'estac.':`${dirName(r.bearing)} ${Math.round(r.speedKmh)}`):'—';
 }
+// Movimiento propio de la célula (px por fotograma de 10 min) a partir de sus posiciones observadas.
+// ≥3 posiciones: recta ajustada a la última hora. 2 posiciones: mitad célula, mitad movimiento general. 1: general.
+function cellVelocity(r){
+  const c=r.cell, v=r.v, pts=(c.trail||[]).concat([{x:c.x,y:c.y,time:r.frameTime}]).slice(-7);
+  let dx=v.dx, dy=v.dy, src='general';
+  if(pts.length>=3){ const n=pts.length, tm=pts.reduce((a,p)=>a+p.time,0)/n, xm=pts.reduce((a,p)=>a+p.x,0)/n, ym=pts.reduce((a,p)=>a+p.y,0)/n;
+    let stt=0, stx=0, sty=0; for(const p of pts){ const t=(p.time-tm)/600; stt+=t*t; stx+=t*(p.x-xm); sty+=t*(p.y-ym); }
+    if(stt>0){ dx=stx/stt; dy=sty/stt; src='célula'; } }
+  else if(pts.length===2){ const dt=(pts[1].time-pts[0].time)/600||1; dx=0.5*v.dx+0.5*(pts[1].x-pts[0].x)/dt; dy=0.5*v.dy+0.5*(pts[1].y-pts[0].y)/dt; src='mezcla'; }
+  const kmh=Math.hypot(dx,dy)*r.g.kmPerPx*6, bearing=(Math.atan2(dx,-dy)*180/Math.PI+360)%360;
+  return {dx,dy,kmh,bearing,src};
+}
 function draw(r, dtMin){
   // dtMin: minutos del fotograma mostrado respecto al analizado (negativo en fotogramas antiguos).
   overlays.clearLayers();
   if(!r.v || !r.cell) return;
   const g=r.g, v=r.v, c=r.cell; dtMin=dtMin||0;
-  const moving=r.speedKmh>=6, P=(x,y)=>pxToLatLng(g,x,y), at=t=>P(c.x+v.dx*t/10, c.y+v.dy*t/10);
+  const cv=cellVelocity(r); c.vel=cv;
+  const moving=cv.kmh>=3, P=(x,y)=>pxToLatLng(g,x,y), at=t=>P(c.x+cv.dx*t/10, c.y+cv.dy*t/10);
   const hail=c.maxDbz>=CFG.hailDbz, col=hail?'#ff3b30':'#f2f5fa', trail=c.trail||[];
   const PAST='#3ddc84', FUT='#ffd400';
   // Etiquetas fijas solo si no se pisan (si no, aparecen al tocar el punto)
@@ -501,10 +514,10 @@ function draw(r, dtMin){
     layer.bindTooltip(text,{permanent:ok,direction:dir||'right',className:'tt',offset:[6,0]}); return layer; };
   // 1) Recuadro de la célula en el fotograma que se está viendo: posición observada si la hay, si no extrapolada
   const shownT=r.frameTime+dtMin*60, obs=trail.find(t=>Math.abs(t.time-shownT)<150);
-  const bx=obs?obs.x:c.x+(moving?v.dx*dtMin/10:0), by=obs?obs.y:c.y+(moving?v.dy*dtMin/10:0), hw=(c.x1-c.x0)/2, hh=(c.y1-c.y0)/2;
+  const bx=obs?obs.x:c.x+(moving?cv.dx*dtMin/10:0), by=obs?obs.y:c.y+(moving?cv.dy*dtMin/10:0), hw=(c.x1-c.x0)/2, hh=(c.y1-c.y0)/2;
   placed.push(map.latLngToContainerPoint(P(bx+hw,by))); // la etiqueta del recuadro (a su derecha) también ocupa sitio
   L.polygon([[bx-hw,by-hh],[bx+hw,by-hh],[bx+hw,by+hh],[bx-hw,by+hh]].map(([x,y])=>P(x,y)),{color:col,weight:2,fill:false,opacity:.9,interactive:false})
-    .bindTooltip(`Célula · ${Math.round(c.maxDbz)} dBZ${hail?' · posible granizo':''}`,{permanent:true,direction:'right',className:'tt',offset:[4,0]}).addTo(overlays);
+    .bindTooltip(`Célula · ${Math.round(c.maxDbz)} dBZ${hail?' · posible granizo':''}${moving?` · ${dirName(cv.bearing)} ${Math.round(cv.kmh)} km/h${cv.src==='célula'?'':' (provisional)'}`:' · casi parada'}`,{permanent:true,direction:'right',className:'tt',offset:[4,0]}).addTo(overlays);
   // 2) Pasado: recorrido observado desde su aparición hasta el último fotograma
   if(trail.length){
     L.polyline(trail.map(t=>P(t.x,t.y)).concat([P(c.x,c.y)]),{color:PAST,weight:3,opacity:.9,lineJoin:'round',interactive:false}).addTo(overlays);
@@ -516,13 +529,16 @@ function draw(r, dtMin){
   }
   // 3) Último fotograma del radar
   tip(L.circleMarker(P(c.x,c.y),{radius:5,color:'#0b1220',fillColor:PAST,fillOpacity:1,weight:1.5}),`Radar ${hhmm(r.frameTime)}`,'left').addTo(overlays);
-  if(!moving) return;
+  if(!moving){ // casi parada: se marca en amarillo en lugar de no dibujar nada
+    L.circle(P(c.x,c.y),{radius:8000,color:FUT,weight:2,dashArray:'6 6',fill:false,interactive:false})
+      .bindTooltip('Casi parada: seguirá por aquí',{permanent:true,direction:'bottom',className:'tt',offset:[0,6]}).addTo(overlays);
+    return; }
   // 4) Futuro: marcas contadas desde ahora (el último fotograma ya tiene unos minutos)
   const age=r.ageMin+(Date.now()-r.computedAt)/60e3, marks=[15,30,60,90], nowS=Date.now()/1000;
   L.polyline([P(c.x,c.y)].concat(marks.map(m=>at(m+age))),{color:FUT,weight:3,dashArray:'7 7',opacity:.95,lineJoin:'round',interactive:false}).addTo(overlays);
   marks.forEach(m=>tip(L.circleMarker(at(m+age),{radius:4,color:FUT,fillColor:'#0b1220',fillOpacity:1,weight:2}),`+${m} min · ${hhmm(nowS+m*60)}`).addTo(overlays));
   const arrow=L.divIcon({className:'bolt',iconSize:[18,18],iconAnchor:[9,9],
-    html:`<svg width="18" height="18" viewBox="0 0 18 18" style="transform:rotate(${r.bearing}deg)"><path d="M9 1 L16 16 L9 12 L2 16 Z" fill="${FUT}" stroke="#0b1220" stroke-width="1"/></svg>`});
+    html:`<svg width="18" height="18" viewBox="0 0 18 18" style="transform:rotate(${cv.bearing}deg)"><path d="M9 1 L16 16 L9 12 L2 16 Z" fill="${FUT}" stroke="#0b1220" stroke-width="1"/></svg>`});
   L.marker(at(105+age),{icon:arrow,interactive:false,keyboard:false}).addTo(overlays);
 }
 map.on('zoomend',()=>{ if(S.analysis && !FC.on){ const cur=S.playList[S.idx]; draw(S.analysis, cur?(cur.time-S.analysis.frameTime)/60:0); } });
