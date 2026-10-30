@@ -58,7 +58,12 @@ button.icon{flex:0 0 auto;padding:8px 12px}
 .modes button{flex:1;padding:6px 10px;font-size:13px}
 #fcrow,#modelsBox,#fclegend{display:none}
 body.fc #fclegend{display:flex}
-#fclegend i{width:18px}
+#fclegend{align-items:flex-start}
+#fcrow .t{min-width:8.5em}
+body.fc .legend:not(#fclegend)>i,body.fc .legend:not(#fclegend)>span:not(#ver){display:none}
+body.fc .legend:not(#fclegend){justify-content:flex-end}
+.fcbar{position:relative;flex:1;height:8px;border-radius:4px;margin:3px 10px 14px 6px}
+.fcbar span{position:absolute;top:11px;transform:translateX(-50%);font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
 body.fc #fcrow{display:flex}
 body.fc #modelsBox{display:block}
 body.fc #radrow,body.fc .charts,body.fc .grid{display:none}
@@ -71,7 +76,8 @@ body.fc #radrow,body.fc .charts,body.fc .grid{display:none}
 .mtab tr.agree th{color:var(--fg)}
 .mtab td.now{outline:1px solid var(--accent)}
 .mcap{font-size:12px;margin-top:4px;color:var(--fg)}
-.mtab td i.drz{display:inline-block;width:4px;height:4px;border-radius:50%;background:#9fd3f5;vertical-align:middle}
+.mtab td i.drz{display:inline-block;width:4px;height:4px;border-radius:50%;background:rgb(140,195,250);vertical-align:middle}
+#fctime.loading::after{content:' ⋯';color:var(--accent)}
 .mkey{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:10.5px;color:var(--muted);margin-top:4px;align-items:center}
 .mkey b{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:3px}
 .mcap.risk{color:var(--warn)}
@@ -138,13 +144,13 @@ body.mesa #sheet{gap:14px}
     <div class="cell"><small>Muy fuerte</small><b id="eSevere">—</b></div>
     <div class="cell"><small>Rumbo · km/h</small><b id="eDir">—</b></div>
   </div>
-  <div class="models" id="modelsBox"><small>Lluvia prevista por modelo · próximas 24 h</small><table class="mtab" id="mtab"></table><div class="mkey"><span><b style="background:#9fd3f5"></b>lluvia ≥0,5 mm/h, cuenta en Acuerdo (colores como el mapa)</span><span><i class="drz" style="display:inline-block;width:4px;height:4px;border-radius:50%;background:#9fd3f5;margin-right:4px"></i>llovizna, no cuenta</span></div><div class="mcap" id="mcap">Cargando modelos…</div></div>
+  <div class="models" id="modelsBox"><small>Lluvia prevista por modelo · próximas 24 h</small><table class="mtab" id="mtab"></table><div class="mkey"><span><b style="background:rgb(90,160,240)"></b>lluvia ≥0,5 mm/h, cuenta en Acuerdo (colores como el mapa)</span><span><i class="drz" style="display:inline-block;width:4px;height:4px;border-radius:50%;background:#9fd3f5;margin-right:4px"></i>llovizna, no cuenta</span></div><div class="mcap" id="mcap">Cargando modelos…</div></div>
   <div class="row" id="fcrow">
     <button class="icon" id="fcplay" aria-label="Reproducir o pausar la previsión">▶</button>
     <input type="range" id="fcslider" min="1" max="48" value="1" aria-label="Hora de la previsión">
     <span class="t" id="fctime">—</span>
   </div>
-  <div class="legend" id="fclegend" aria-label="Escala de lluvia prevista en mm/h"><span>mm/h</span><i style="background:#9fd3f5"></i><span>0,1</span><i style="background:#3d9be9"></i><span>2</span><i style="background:#2bb24c"></i><span>5</span><i style="background:#ffd400"></i><span>10</span><i style="background:#ff8c00"></i><span>20</span><i style="background:#e60000"></i><span>30</span><i style="background:#b0238f"></i><span>60</span><i style="background:#6a0dad"></i></div>
+  <div class="legend" id="fclegend" aria-label="Escala de lluvia prevista en mm/h"><span>mm/h</span><div class="fcbar" id="fcbar"></div><span id="fcrun" style="white-space:nowrap"></span></div>
   <div class="row" id="radrow">
     <button class="icon" id="play" aria-label="Reproducir o pausar">⏸</button>
     <input type="range" id="slider" min="0" max="0" value="0" aria-label="Fotograma">
@@ -162,6 +168,7 @@ body.mesa #sheet{gap:14px}
 </section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
 <script>
 'use strict';
 // ---------- Config ----------
@@ -209,7 +216,7 @@ let homeMarker = L.marker([S.pos.lat,S.pos.lng], { icon:homeIcon, keyboard:false
 let homeCircle = L.circle([S.pos.lat,S.pos.lng], { radius:CFG.radiusKm*1000, color:'#ffb000', weight:1, fill:false, dashArray:'4 4', interactive:false }).addTo(map);
 map.on('click', e => { if(!S.picking) return; S.picking=false; $('pick').classList.remove('active'); setPos({lat:e.latlng.lat, lng:e.latlng.lng, name:'Punto fijado'}); });
 
-function setPos(p){ S.pos=p; savePos(); homeMarker.setLatLng([p.lat,p.lng]); homeCircle.setLatLng([p.lat,p.lng]); map.panTo([p.lat,p.lng]); toast('Posición: '+p.name); analyze(); if(typeof boltRecenter==='function') boltRecenter(); if(typeof loadOutlook==='function') loadOutlook(true); if(typeof loadModels==='function') loadModels(true); }
+function setPos(p){ S.pos=p; savePos(); homeMarker.setLatLng([p.lat,p.lng]); homeCircle.setLatLng([p.lat,p.lng]); map.panTo([p.lat,p.lng]); toast('Posición: '+p.name); analyze(); if(typeof boltRecenter==='function') boltRecenter(); if(typeof loadOutlook==='function') loadOutlook(true); if(typeof loadModels==='function') loadModels(true); if(FC.on) fcUpdate(); }
 
 // ---------- Fotogramas ----------
 async function fetchFrames(){
@@ -608,36 +615,69 @@ $('share').onclick=async()=>{
 
 // ---------- Previsión ICON-EU (DWD, WMS gratuito) ----------
 const DWD_WMS='https://maps.dwd.de/geoserver/dwd/wms';
-// Escala LAWA del DWD (clases en mm/h) repintada con una rampa tipo Windy.
-const LAWA_TO=new Map([
-  ['192,192,192',[159,211,245,150]], // 0,1–2
-  ['254,254,192',[61,155,233,180]],  // 2–5
-  ['254,254,91', [43,178,76,190]],   // 5–10
-  ['207,242,0',  [217,224,33,200]],  // 10–15
-  ['160,214,37', [255,212,0,210]],   // 15–20
-  ['54,201,105', [255,140,0,215]],   // 20–25
-  ['0,215,215',  [255,90,0,220]],    // 25–30
-  ['0,166,221',  [230,0,0,225]],     // 30–40
-  ['0,0,254',    [180,0,45,230]],    // 40–60
-  ['151,48,194', [176,35,143,235]],  // 60–80
-  ['217,38,199', [138,31,191,235]],  // 80–100
-  ['254,0,0',    [106,13,173,240]],  // 100–130
-  ['160,0,0',    [75,0,130,240]],    // 130–160
-  ['96,96,96',   [255,255,255,240]], // ≥160
-]);
-const FcLayer=L.GridLayer.extend({
-  createTile(coords, done){
-    const ts=this.getTileSize(), c=document.createElement('canvas'); c.width=ts.x; c.height=ts.y;
-    const nw=L.CRS.EPSG3857.project(map.unproject(coords.scaleBy(ts), coords.z)), se=L.CRS.EPSG3857.project(map.unproject(coords.add([1,1]).scaleBy(ts), coords.z));
-    const url=`${DWD_WMS}?service=WMS&version=1.3.0&request=GetMap&layers=dwd:Icon-eu_reg00625_fd_sl_TOTPREC01H&styles=&crs=EPSG:3857&bbox=${nw.x},${se.y},${se.x},${nw.y}&width=${ts.x}&height=${ts.y}&format=image/png&transparent=true&time=${this.options.time}${FC.ref?'&DIM_REFERENCE_TIME='+FC.ref:''}`;
-    const im=new Image(); im.crossOrigin='anonymous';
-    im.onload=()=>{ try{ const ctx=c.getContext('2d',{willReadFrequently:true}); ctx.drawImage(im,0,0); const id=ctx.getImageData(0,0,c.width,c.height), d=id.data;
-        for(let q=0;q<d.length;q+=4){ if(d[q+3]===0) continue; const to=LAWA_TO.get(d[q]+','+d[q+1]+','+d[q+2]); if(to){ d[q]=to[0]; d[q+1]=to[1]; d[q+2]=to[2]; d[q+3]=to[3]; } else d[q+3]=0; }
-        ctx.putImageData(id,0,0); }catch(e){} done(null,c); };
-    let tries=0; im.onerror=()=>{ if(++tries<=3) setTimeout(()=>{ im.src=url+'&_r='+tries; }, 700*tries); else done(null,c); }; im.src=url; return c;
-  },
-  setTime(t){ if(this.options.time===t) return; this.options.time=t; this.redraw(); }
-});
+const DWD_WCS='https://maps.dwd.de/geoserver/dwd/wcs';
+// Rampa propia tipo Windy, continua y en escala logarítmica (mm/h → RGBA). La llovizna entra casi transparente.
+const RAMP=[[0.1,[150,200,255,0]],[0.2,[140,195,250,105]],[0.5,[90,160,240,160]],[1,[50,120,230,190]],[2,[30,170,140,205]],
+  [4,[110,200,60,215]],[7,[240,225,50,225]],[10,[255,160,30,232]],[20,[240,60,40,238]],[35,[200,30,140,244]],[60,[130,40,210,250]]];
+const LUT_N=512, LUT_A=Math.log10(0.1), LUT_B=Math.log10(80), LUT=new Uint8ClampedArray(LUT_N*4);
+for(let k=0;k<LUT_N;k++){ const v=10**(LUT_A+(LUT_B-LUT_A)*k/(LUT_N-1)); let i=0; while(i<RAMP.length-2 && v>RAMP[i+1][0]) i++;
+  const [v0,c0]=RAMP[i], [v1,c1]=RAMP[i+1], t=Math.max(0,Math.min(1,(Math.log10(v)-Math.log10(v0))/(Math.log10(v1)-Math.log10(v0))));
+  for(let q=0;q<4;q++) LUT[k*4+q]=c0[q]+(c1[q]-c0[q])*t; }
+function lutIdx(v){ return Math.max(0,Math.min(LUT_N-1,Math.round((Math.log10(v)-LUT_A)/(LUT_B-LUT_A)*(LUT_N-1)))); }
+function rampCss(v){ const k=lutIdx(v)*4; return `rgb(${LUT[k]},${LUT[k+1]},${LUT[k+2]})`; }
+(function legend(){ const bar=$('fcbar'); const stops=[]; for(let k=0;k<=20;k++){ const i=Math.round(k/20*(LUT_N-1))*4; stops.push(`rgba(${LUT[i]},${LUT[i+1]},${LUT[i+2]},${Math.max(.35,LUT[i+3]/255)}) ${k*5}%`); }
+  bar.style.background=`linear-gradient(90deg,${stops.join(',')})`;
+  for(const v of [0.1,0.5,1,2,5,10,20,50]){ const sp=document.createElement('span'); sp.textContent=String(v).replace('.',','); sp.style.left=((Math.log10(v)-LUT_A)/(LUT_B-LUT_A)*100)+'%'; bar.appendChild(sp); } })();
+
+FC.grids=new Map(); FC.req=0; FC.ov=null; FC.box=null; FC.cur=null;
+function fcRegion(){ const la=Math.round(S.pos.lat), lo=Math.round(S.pos.lng); return {la0:la-5, la1:la+5, lo0:lo-8, lo1:lo+8}; }
+async function fcLoad(timeIso, ref, R){
+  const key=`${ref}|${timeIso}|${R.la0},${R.lo0}`; if(FC.grids.has(key)) return FC.grids.get(key);
+  const q=new URLSearchParams({service:'WCS',version:'2.0.1',request:'GetCoverage',coverageId:'dwd__Icon-eu_reg00625_fd_sl_TOTPREC01H',format:'image/tiff'});
+  q.append('subset',`Lat(${R.la0},${R.la1})`); q.append('subset',`Long(${R.lo0},${R.lo1})`); q.append('subset',`time("${timeIso.replace('Z','.000Z')}")`);
+  if(ref) q.append('subset',`REFERENCE_TIME("${ref.replace('Z','.000Z')}")`);
+  for(let a=0;a<4;a++){ // algún servidor del DWD falla a ratos: reintentar
+    try{ const r=await fetch(`${DWD_WCS}?${q}&_a=${a}`); if(!(r.headers.get('content-type')||'').includes('tiff')){ await new Promise(z=>setTimeout(z,500*(a+1))); continue; }
+      const img=await (await GeoTIFF.fromArrayBuffer(await r.arrayBuffer())).getImage(), [v]=await img.readRasters(), bb=img.getBoundingBox();
+      const g={v, w:img.getWidth(), h:img.getHeight(), minX:bb[0], minY:bb[1], maxX:bb[2], maxY:bb[3]};
+      FC.grids.set(key,g); if(FC.grids.size>60) FC.grids.delete(FC.grids.keys().next().value); return g;
+    }catch(e){ await new Promise(z=>setTimeout(z,500*(a+1))); } }
+  throw new Error('El DWD no ha devuelto la previsión para esa hora');
+}
+function fcValue(g, lat, lon){ // valor bilineal en un punto (mm/h)
+  const gx=(lon-g.minX)/((g.maxX-g.minX)/g.w)-0.5, gy=(g.maxY-lat)/((g.maxY-g.minY)/g.h)-0.5;
+  if(gx<0||gy<0||gx>g.w-1||gy>g.h-1) return null;
+  const x0=Math.floor(gx), y0=Math.floor(gy), x1=Math.min(g.w-1,x0+1), y1=Math.min(g.h-1,y0+1), fx=gx-x0, fy=gy-y0, V=(x,y)=>Math.max(0,g.v[y*g.w+x]||0);
+  return V(x0,y0)*(1-fx)*(1-fy)+V(x1,y0)*fx*(1-fy)+V(x0,y1)*(1-fx)*fy+V(x1,y1)*fx*fy;
+}
+function fcRender(g){
+  const P=L.CRS.EPSG3857, p0=P.project(L.latLng(g.maxY,g.minX)), p1=P.project(L.latLng(g.minY,g.maxX));
+  const Wc=Math.min(1600,g.w*6), Hc=Math.round(Wc*(p0.y-p1.y)/(p1.x-p0.x)), c=document.createElement('canvas'); c.width=Wc; c.height=Hc;
+  const ctx=c.getContext('2d'), id=ctx.createImageData(Wc,Hc), d=id.data, dlon=(g.maxX-g.minX)/g.w, dlat=(g.maxY-g.minY)/g.h;
+  const GX=new Float32Array(Wc); for(let i=0;i<Wc;i++) GX[i]=((i+.5)/Wc*(g.maxX-g.minX))/dlon-0.5;
+  for(let j=0;j<Hc;j++){
+    const lat=P.unproject(L.point(0,p0.y-(j+.5)/Hc*(p0.y-p1.y))).lat, gy=Math.max(0,Math.min(g.h-1,(g.maxY-lat)/dlat-0.5)), y0=Math.floor(gy), y1=Math.min(g.h-1,y0+1), fy=gy-y0;
+    for(let i=0;i<Wc;i++){ const gx=Math.max(0,Math.min(g.w-1,GX[i])), x0=Math.floor(gx), x1=Math.min(g.w-1,x0+1), fx=gx-x0;
+      const a=g.v[y0*g.w+x0]||0, b=g.v[y0*g.w+x1]||0, cc=g.v[y1*g.w+x0]||0, dd=g.v[y1*g.w+x1]||0;
+      const v=a*(1-fx)*(1-fy)+b*fx*(1-fy)+cc*(1-fx)*fy+dd*fx*fy; if(!(v>=0.1)) continue;
+      const k=lutIdx(v)*4, o=(j*Wc+i)*4; d[o]=LUT[k]; d[o+1]=LUT[k+1]; d[o+2]=LUT[k+2]; d[o+3]=LUT[k+3]; } }
+  ctx.putImageData(id,0,0);
+  const bounds=L.latLngBounds([g.minY,g.minX],[g.maxY,g.maxX]), url=c.toDataURL('image/png');
+  if(FC.ov){ FC.ov.setUrl(url); FC.ov.setBounds(bounds); } else FC.ov=L.imageOverlay(url,bounds,{interactive:false,zIndex:7,attribution:'previsión ICON-EU © DWD'}).addTo(map);
+  if(FC.box) FC.box.setBounds(bounds); else FC.box=L.rectangle(bounds,{color:'#8fa0bd',weight:1,opacity:.35,dashArray:'4 6',fill:false,interactive:false}).addTo(map);
+  FC.cur=g;
+}
+async function fcUpdate(){
+  if(!FC.on) return; const my=++FC.req, t=fcIso(FC.h), R=fcRegion(); $('fctime').classList.add('loading');
+  try{ const g=await fcLoad(t,FC.ref,R); if(my!==FC.req||!FC.on) return; fcRender(g);
+    for(const k of [1,2,3]) if(FC.h+k<=48) fcLoad(fcIso(FC.h+k),FC.ref,R).catch(()=>{}); // precarga para la animación
+  }catch(e){ if(my===FC.req) toast(e.message); }
+  finally{ if(my===FC.req) $('fctime').classList.remove('loading'); }
+}
+map.on('click',e=>{ if(!FC.on||S.picking||!FC.cur) return; const v=fcValue(FC.cur,e.latlng.lat,e.latlng.lng);
+  if(v==null) return toast('Fuera de la zona de previsión'); const t=new Date(FC.base.getTime()+FC.h*3600e3);
+  toast(v<0.1?`Sin lluvia prevista aquí a las ${hhmm(t/1000)}`:`${v.toFixed(1).replace('.',',')} mm/h previstos aquí a las ${hhmm(t/1000)}`); });
+
 // El DWD no siempre sirve la última pasada por defecto (algún servidor se queda días atrás):
 // se busca la más reciente que responde con imagen y se pide de forma explícita.
 async function fcFindRef(){
@@ -660,9 +700,9 @@ function fcIso(h){ const d=new Date(FC.base.getTime()+h*3600e3); return d.toISOS
 function fcShow(h){
   FC.h=Math.max(1,Math.min(48,h)); $('fcslider').value=FC.h;
   const t=new Date(FC.base.getTime()+FC.h*3600e3);
-  const run=FC.ref?` · pasada ${FC.ref.slice(8,10)}/${FC.ref.slice(5,7)} ${FC.ref.slice(11,13)} UTC`:'';
-  $('fctime').textContent=`+${FC.h} h · ${t.toLocaleString('es-ES',{weekday:'short',hour:'2-digit',minute:'2-digit'})}${run}`;
-  if(FC.layer) FC.layer.setTime(fcIso(FC.h));
+  $('fcrun').textContent=FC.ref?`pasada ${FC.ref.slice(8,10)}/${FC.ref.slice(5,7)} ${FC.ref.slice(11,13)} UTC`:'';
+  $('fctime').textContent=`+${FC.h} h · ${t.toLocaleString('es-ES',{weekday:'short',hour:'2-digit',minute:'2-digit'})}`;
+  fcUpdate();
 }
 function fcPlay(p){ FC.playing=p; $('fcplay').textContent=p?'⏸':'▶'; clearTimeout(FC.timer);
   const step=()=>{ if(!FC.playing) return; fcShow(FC.h>=48?1:FC.h+1); FC.timer=setTimeout(step, FC.h>=48?1500:900); }; if(p) FC.timer=setTimeout(step,900); }
@@ -671,18 +711,18 @@ function setMode(fc){
   try{ localStorage.setItem('tormentas.mode',fc?'fc':'radar'); }catch(e){}
   if(fc){
     FC.base=fcBase();
-    if(!FC.layer) FC.layer=new FcLayer({zIndex:7,opacity:1,time:fcIso(FC.h),attribution:'previsión ICON-EU © DWD'});
-    FC.layer.addTo(map); fcEnsureRef().then(ch=>{ if(FC.layer){ FC.layer.redraw(); fcShow(FC.h); } }); setPlaying(false); S.playList.forEach(f=>S.layers.get(f.path)&&S.layers.get(f.path).setOpacity(0)); overlays.clearLayers();
-    fcShow(FC.h); toast('Previsión ICON-EU: lluvia en cada hora (mm/h). Se actualiza con cada pasada del modelo, cada 3 h.',5000);
+    if(FC.ov) FC.ov.addTo(map); if(FC.box) FC.box.addTo(map);
+    fcEnsureRef().then(()=>fcShow(FC.h)); setPlaying(false); S.playList.forEach(f=>S.layers.get(f.path)&&S.layers.get(f.path).setOpacity(0)); overlays.clearLayers();
+    toast('Previsión ICON-EU: lluvia en cada hora (mm/h). Toca el mapa para ver el valor en un punto.',5000);
   } else {
-    fcPlay(false); if(FC.layer) map.removeLayer(FC.layer); showFrame(S.idx); setPlaying(true);
+    fcPlay(false); FC.req++; if(FC.ov) map.removeLayer(FC.ov); if(FC.box) map.removeLayer(FC.box); showFrame(S.idx); setPlaying(true);
   }
   setTimeout(()=>{ if(typeof sheetApply==='function') sheetApply(); },50);
 }
 $('mRadar').onclick=()=>setMode(false); $('mFc').onclick=()=>setMode(true);
 $('fcslider').oninput=e=>{ fcPlay(false); fcShow(+e.target.value); };
 $('fcplay').onclick=()=>fcPlay(!FC.playing);
-setInterval(()=>{ if(FC.on) fcEnsureRef().then(ch=>{ if(ch&&FC.layer){ FC.layer.redraw(); fcShow(FC.h); } }); }, 15*60e3);
+setInterval(()=>{ if(FC.on) fcEnsureRef().then(ch=>{ if(ch) fcShow(FC.h); }); }, 15*60e3);
 try{ if(localStorage.getItem('tormentas.mode')==='fc') setTimeout(()=>setMode(true),0); }catch(e){}
 
 // ---------- Tabla de cinco modelos (Open-Meteo) ----------
@@ -697,7 +737,7 @@ async function loadModels(force){
   }catch(e){ console.error(e); $('mcap').textContent='Modelos no disponibles ahora mismo'; }
 }
 // Misma escala que el mapa de previsión. Por debajo de 0,5 mm/h es llovizna: se dibuja como punto y no cuenta en el acuerdo.
-function mmColor(mm){ return mm==null||mm<0.5?'rgba(255,255,255,.06)':mm<2?'#9fd3f5':mm<5?'#3d9be9':mm<10?'#2bb24c':mm<20?'#ffd400':mm<30?'#ff8c00':'#e60000'; }
+function mmColor(mm){ return mm==null||mm<0.5?'rgba(255,255,255,.06)':rampCss(mm); }
 function renderModels(){
   const h=S.models; if(!h||!h.time) return;
   const n=Math.min(24,h.time.length), nowH=new Date().getHours();

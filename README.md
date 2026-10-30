@@ -12,7 +12,7 @@ a tu posición. Una sola página HTML, sin servidor ni claves.
 - Sparkline: intensidad máxima sobre la posición en cada fotograma de las últimas 2 h.
 - Próximas 12 h: probabilidad de lluvia, CAPE y código de tiempo de Open-Meteo (gratis, sin clave).
 - Satélite: Meteosat vía EUMETSAT View (WMS gratuito): RGB de convección de día, infrarrojo MTG de noche, y contornos RDT (células en desarrollo).
-- Previsión: modo con la precipitación horaria de ICON-EU (WMS del DWD, 48 h) y tabla de cinco modelos para la posición (AROME HD, ICON-EU, ECMWF IFS, GFS, UKMO vía Open-Meteo) con fila de acuerdo.
+- Previsión: modo con la precipitación horaria de ICON-EU (valores numéricos del WCS del DWD en GeoTIFF, leídos con geotiff.js y pintados con una rampa continua propia; zona de ±8° × ±5° alrededor de la posición, 48 h) y tabla de cinco modelos para la posición (AROME HD, ICON-EU, ECMWF IFS, GFS, UKMO vía Open-Meteo) con fila de acuerdo.
 - Compartir: resumen en texto por la hoja de compartir del móvil.
 - Modo mesa (`#mesa`): letras grandes y pantalla encendida (Wake Lock).
 - La posición se guarda en el navegador (GPS o toque en el mapa).
