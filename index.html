@@ -71,6 +71,9 @@ body.fc #radrow,body.fc .charts,body.fc .grid{display:none}
 .mtab tr.agree th{color:var(--fg)}
 .mtab td.now{outline:1px solid var(--accent)}
 .mcap{font-size:12px;margin-top:4px;color:var(--fg)}
+.mtab td i.drz{display:inline-block;width:4px;height:4px;border-radius:50%;background:#9fd3f5;vertical-align:middle}
+.mkey{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:10.5px;color:var(--muted);margin-top:4px;align-items:center}
+.mkey b{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:3px}
 .mcap.risk{color:var(--warn)}
 .chart{border:1px solid var(--line);border-radius:10px;padding:6px 8px;min-width:0}
 .chart small{display:block;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -135,7 +138,7 @@ body.mesa #sheet{gap:14px}
     <div class="cell"><small>Muy fuerte</small><b id="eSevere">—</b></div>
     <div class="cell"><small>Rumbo · km/h</small><b id="eDir">—</b></div>
   </div>
-  <div class="models" id="modelsBox"><small>Lluvia prevista por modelo · próximas 24 h</small><table class="mtab" id="mtab"></table><div class="mcap" id="mcap">Cargando modelos…</div></div>
+  <div class="models" id="modelsBox"><small>Lluvia prevista por modelo · próximas 24 h</small><table class="mtab" id="mtab"></table><div class="mkey"><span><b style="background:#9fd3f5"></b>lluvia ≥0,5 mm/h, cuenta en Acuerdo (colores como el mapa)</span><span><i class="drz" style="display:inline-block;width:4px;height:4px;border-radius:50%;background:#9fd3f5;margin-right:4px"></i>llovizna, no cuenta</span></div><div class="mcap" id="mcap">Cargando modelos…</div></div>
   <div class="row" id="fcrow">
     <button class="icon" id="fcplay" aria-label="Reproducir o pausar la previsión">▶</button>
     <input type="range" id="fcslider" min="1" max="48" value="1" aria-label="Hora de la previsión">
@@ -187,7 +190,7 @@ const $ = id => document.getElementById(id);
 const S = { pos: loadPos(), frames: [], host: '', layers: new Map(), playList: [], idx: 0, playing: true, timer: null,
             analysis: null, picking: false, grid: null, lastGen: 0, busy: false };
 
-const FC={ on:false, layer:null, base:null, h:1, timer:null, playing:false };
+const FC={ on:false, layer:null, base:null, h:1, timer:null, playing:false, ref:null, refAt:0 };
 function loadPos(){ try{ const p=JSON.parse(localStorage.getItem('tormentas.pos')); if(p&&isFinite(p.lat)&&isFinite(p.lng)) return p; }catch(e){} return {...DEFAULT_POS}; }
 function savePos(){ try{ localStorage.setItem('tormentas.pos', JSON.stringify(S.pos)); }catch(e){} }
 
@@ -626,21 +629,39 @@ const FcLayer=L.GridLayer.extend({
   createTile(coords, done){
     const ts=this.getTileSize(), c=document.createElement('canvas'); c.width=ts.x; c.height=ts.y;
     const nw=L.CRS.EPSG3857.project(map.unproject(coords.scaleBy(ts), coords.z)), se=L.CRS.EPSG3857.project(map.unproject(coords.add([1,1]).scaleBy(ts), coords.z));
-    const url=`${DWD_WMS}?service=WMS&version=1.3.0&request=GetMap&layers=dwd:Icon-eu_reg00625_fd_sl_TOTPREC01H&styles=&crs=EPSG:3857&bbox=${nw.x},${se.y},${se.x},${nw.y}&width=${ts.x}&height=${ts.y}&format=image/png&transparent=true&time=${this.options.time}`;
+    const url=`${DWD_WMS}?service=WMS&version=1.3.0&request=GetMap&layers=dwd:Icon-eu_reg00625_fd_sl_TOTPREC01H&styles=&crs=EPSG:3857&bbox=${nw.x},${se.y},${se.x},${nw.y}&width=${ts.x}&height=${ts.y}&format=image/png&transparent=true&time=${this.options.time}${FC.ref?'&DIM_REFERENCE_TIME='+FC.ref:''}`;
     const im=new Image(); im.crossOrigin='anonymous';
     im.onload=()=>{ try{ const ctx=c.getContext('2d',{willReadFrequently:true}); ctx.drawImage(im,0,0); const id=ctx.getImageData(0,0,c.width,c.height), d=id.data;
         for(let q=0;q<d.length;q+=4){ if(d[q+3]===0) continue; const to=LAWA_TO.get(d[q]+','+d[q+1]+','+d[q+2]); if(to){ d[q]=to[0]; d[q+1]=to[1]; d[q+2]=to[2]; d[q+3]=to[3]; } else d[q+3]=0; }
         ctx.putImageData(id,0,0); }catch(e){} done(null,c); };
-    im.onerror=()=>done(null,c); im.src=url; return c;
+    let tries=0; im.onerror=()=>{ if(++tries<=3) setTimeout(()=>{ im.src=url+'&_r='+tries; }, 700*tries); else done(null,c); }; im.src=url; return c;
   },
   setTime(t){ if(this.options.time===t) return; this.options.time=t; this.redraw(); }
 });
+// El DWD no siempre sirve la última pasada por defecto (algún servidor se queda días atrás):
+// se busca la más reciente que responde con imagen y se pide de forma explícita.
+async function fcFindRef(){
+  const now=Date.now(), six=6*3600e3, base=Math.floor(now/six)*six;
+  for(let k=0;k<5;k++){ const ref=new Date(base-k*six).toISOString().replace('.000Z','Z');
+    for(let a=0;a<3;a++){ try{
+      const u=`${DWD_WMS}?service=WMS&version=1.3.0&request=GetMap&layers=dwd:Icon-eu_reg00625_fd_sl_TOTPREC01H&styles=&crs=EPSG:3857&bbox=250000,4700000,450000,4880000&width=8&height=8&format=image/png&transparent=true&time=${fcIso(6)}&DIM_REFERENCE_TIME=${ref}`;
+      // Una pasada inexistente y un servidor desfasado responden igual: se dan 3 intentos antes de pasar a la anterior.
+      const r=await fetch(u+'&_a='+a,{cache:'no-store'}); if((r.headers.get('content-type')||'').startsWith('image/')) return ref;
+    }catch(e){} } }
+  return null;
+}
+async function fcEnsureRef(){
+  if(FC.ref && Date.now()-FC.refAt<60*60e3) return false;
+  const ref=await fcFindRef(); FC.refAt=Date.now(); if(!ref || ref===FC.ref) return false;
+  FC.ref=ref; return true;
+}
 function fcBase(){ const d=new Date(); d.setUTCMinutes(0,0,0); return d; }
 function fcIso(h){ const d=new Date(FC.base.getTime()+h*3600e3); return d.toISOString().replace('.000Z','Z'); }
 function fcShow(h){
   FC.h=Math.max(1,Math.min(48,h)); $('fcslider').value=FC.h;
   const t=new Date(FC.base.getTime()+FC.h*3600e3);
-  $('fctime').textContent=`+${FC.h} h · ${t.toLocaleString('es-ES',{weekday:'short',hour:'2-digit',minute:'2-digit'})}`;
+  const run=FC.ref?` · pasada ${FC.ref.slice(8,10)}/${FC.ref.slice(5,7)} ${FC.ref.slice(11,13)} UTC`:'';
+  $('fctime').textContent=`+${FC.h} h · ${t.toLocaleString('es-ES',{weekday:'short',hour:'2-digit',minute:'2-digit'})}${run}`;
   if(FC.layer) FC.layer.setTime(fcIso(FC.h));
 }
 function fcPlay(p){ FC.playing=p; $('fcplay').textContent=p?'⏸':'▶'; clearTimeout(FC.timer);
@@ -651,7 +672,7 @@ function setMode(fc){
   if(fc){
     FC.base=fcBase();
     if(!FC.layer) FC.layer=new FcLayer({zIndex:7,opacity:1,time:fcIso(FC.h),attribution:'previsión ICON-EU © DWD'});
-    FC.layer.addTo(map); setPlaying(false); S.playList.forEach(f=>S.layers.get(f.path)&&S.layers.get(f.path).setOpacity(0)); overlays.clearLayers();
+    FC.layer.addTo(map); fcEnsureRef().then(ch=>{ if(FC.layer){ FC.layer.redraw(); fcShow(FC.h); } }); setPlaying(false); S.playList.forEach(f=>S.layers.get(f.path)&&S.layers.get(f.path).setOpacity(0)); overlays.clearLayers();
     fcShow(FC.h); toast('Previsión ICON-EU: lluvia en cada hora (mm/h). Se actualiza con cada pasada del modelo, cada 3 h.',5000);
   } else {
     fcPlay(false); if(FC.layer) map.removeLayer(FC.layer); showFrame(S.idx); setPlaying(true);
@@ -661,6 +682,7 @@ function setMode(fc){
 $('mRadar').onclick=()=>setMode(false); $('mFc').onclick=()=>setMode(true);
 $('fcslider').oninput=e=>{ fcPlay(false); fcShow(+e.target.value); };
 $('fcplay').onclick=()=>fcPlay(!FC.playing);
+setInterval(()=>{ if(FC.on) fcEnsureRef().then(ch=>{ if(ch&&FC.layer){ FC.layer.redraw(); fcShow(FC.h); } }); }, 15*60e3);
 try{ if(localStorage.getItem('tormentas.mode')==='fc') setTimeout(()=>setMode(true),0); }catch(e){}
 
 // ---------- Tabla de cinco modelos (Open-Meteo) ----------
@@ -674,7 +696,8 @@ async function loadModels(force){
     S.models=(await r.json()).hourly; S.modelsKey=key; S.modelsAt=Date.now(); renderModels();
   }catch(e){ console.error(e); $('mcap').textContent='Modelos no disponibles ahora mismo'; }
 }
-function mmColor(mm){ return mm==null?'rgba(255,255,255,.04)':mm<0.1?'rgba(255,255,255,.07)':mm<0.5?'#7fb3c8':mm<2?'#36a9e1':mm<5?'#ffd200':mm<10?'#ff8100':'#e62800'; }
+// Misma escala que el mapa de previsión. Por debajo de 0,5 mm/h es llovizna: se dibuja como punto y no cuenta en el acuerdo.
+function mmColor(mm){ return mm==null||mm<0.5?'rgba(255,255,255,.06)':mm<2?'#9fd3f5':mm<5?'#3d9be9':mm<10?'#2bb24c':mm<20?'#ffd400':mm<30?'#ff8c00':'#e60000'; }
 function renderModels(){
   const h=S.models; if(!h||!h.time) return;
   const n=Math.min(24,h.time.length), nowH=new Date().getHours();
@@ -686,7 +709,8 @@ function renderModels(){
     for(let i=0;i<n;i++){ const mm=pr[i], code=wc[i], c=cp[i];
       if(mm!=null){ avail[i]++; if(mm>=0.5) wet[i]++; }
       const ts=(code!=null&&code>=95) || (code==null && c!=null && c>=800 && mm!=null && mm>=0.5); if(ts) storm[i]++;
-      html+=`<td style="background:${mmColor(mm)}" title="${name} ${h.time[i].slice(11,16)}: ${mm==null?'sin dato':mm.toFixed(1)+' mm'}${ts?' · tormenta':''}">${ts?'⚡':''}</td>`; }
+      const drz=mm!=null&&mm>=0.1&&mm<0.5;
+      html+=`<td style="background:${mmColor(mm)}" title="${name} ${h.time[i].slice(11,16)}: ${mm==null?'sin dato':mm.toFixed(1)+' mm'}${drz?' (llovizna, no cuenta)':''}${ts?' · tormenta':''}">${ts?'⚡':drz?'<i class="drz"></i>':''}</td>`; }
     html+='</tr>';
   }
   html+='<tr class="agree"><th>Acuerdo</th>'+wet.slice(0,n).map((w,i)=>{ const f=avail[i]?w/avail[i]:0; const bg=f>=0.8?'#ff8100':f>=0.6?'#ffd200':f>=0.4?'#36a9e1':f>0?'#2b4a63':'rgba(255,255,255,.05)';
