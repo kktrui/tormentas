@@ -82,6 +82,16 @@ body.fc #radrow,body.fc .charts,body.fc .grid{display:none}
 .mkey b{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:3px}
 .mcap.risk{color:var(--warn)}
 .chart{border:1px solid var(--line);border-radius:10px;padding:6px 8px;min-width:0}
+/* Estación Mancor (STM10 RiscBal-UIB) en casi tiempo real; datos de la rama `datos`, que sube la Pi */
+.stn{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;padding:7px 8px;color:inherit;text-decoration:none;min-width:0}
+.stn small{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stn .lv{flex:none;width:7px;height:7px;border-radius:50%;background:var(--ok);animation:stnp 2s infinite}
+.stn.late .lv{background:var(--warn);animation:none}.stn.off .lv{background:var(--bad);animation:none}
+@keyframes stnp{0%{box-shadow:0 0 0 0 rgba(79,209,139,.55)}70%{box-shadow:0 0 0 6px rgba(79,209,139,0)}100%{box-shadow:0 0 0 0 rgba(79,209,139,0)}}
+.stn b{display:block;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stn .si{flex:1;min-width:0}.stn .sd{font-size:12px;color:var(--fg);line-height:1.3;margin-top:2px;font-variant-numeric:tabular-nums}
+.stn .chev{flex:none;color:var(--muted);font-size:20px}
+body.mesa .stn b{font-size:34px}body.mesa .stn .sd{font-size:15px}
 .chart small{display:block;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chart svg{display:block;width:100%;height:44px;margin-top:4px}
 .chart .cap{font-size:12px;color:var(--fg);margin-top:3px;line-height:1.25}
@@ -144,6 +154,7 @@ body.mesa #sheet{gap:14px}
     <div class="cell"><small>Muy fuerte</small><b id="eSevere">—</b></div>
     <div class="cell"><small>Rumbo · km/h</small><b id="eDir">—</b></div>
   </div>
+  <a class="stn" id="stn" href="mancor.html" hidden><div><b id="stnT">—</b></div><div class="si"><small><i class="lv"></i><span id="stnHead">Mancor · en directo</span></small><div class="sd" id="stnD">—</div></div><span class="chev">›</span></a>
   <div class="models" id="modelsBox"><small>Lluvia prevista por modelo · próximas 24 h</small><table class="mtab" id="mtab"></table><div class="mkey"><span><b style="background:rgb(90,160,240)"></b>lluvia ≥0,5 mm/h, cuenta en Acuerdo (colores como el mapa)</span><span><i class="drz" style="display:inline-block;width:4px;height:4px;border-radius:50%;background:#9fd3f5;margin-right:4px"></i>llovizna, no cuenta</span></div><div class="mcap" id="mcap">Cargando modelos…</div></div>
   <div class="row" id="fcrow">
     <button class="icon" id="fcplay" aria-label="Reproducir o pausar la previsión">▶</button>
@@ -938,6 +949,25 @@ setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString('es-ES',{ho
 setInterval(()=>{ if(S.analysis && !S.busy) render(S.analysis); }, 60e3); // cuenta atrás
 refresh(true);
 setInterval(()=>refresh(false), CFG.refreshMs);
+// ---------- Estación Mancor (casi tiempo real) ----------
+async function stnLoad(){
+  try{
+    let txt; try{ const r=await fetch('https://raw.githubusercontent.com/kktrui/tormentas/datos/mancor/STM10.csv?t='+Math.floor(Date.now()/60e3)); if(!r.ok) throw 0; txt=await r.text(); }
+    catch(e){ const r=await fetch('mancor/STM10.csv?'+Date.now()); if(!r.ok) return; txt=await r.text(); }
+    const L=txt.trim().split('\n'); const H=L[0].split(','); const rows=L.slice(1).map(l=>{const c=l.split(','),o={}; H.forEach((h,i)=>o[h]=c[i]); o.t=new Date(o.fecha_dato.replace(' ','T')); return o;});
+    const last=rows[rows.length-1]; if(!last) return;
+    const day=last.t.toDateString(), today=rows.filter(o=>o.t.toDateString()===day);
+    const rain=today.reduce((a,o)=>a+(+o.lluvia_10min_mm||0),0), tv=today.map(o=>+o.temp_aire_c);
+    const f=(v,d=1)=>(+v).toFixed(d).replace('.',','), ago=Math.round((Date.now()-last.t)/60e3);
+    const el=$('stn'); el.hidden=false; el.classList.toggle('late',ago>20&&ago<=60); el.classList.toggle('off',ago>60);
+    $('stnT').textContent=f(last.temp_aire_c)+' °C';
+    $('stnHead').textContent=`Mancor · ${ago<=20?'en directo':ago<=60?'con retraso':'sin datos'} · hace ${ago<120?ago+' min':Math.round(ago/60)+' h'}`; el.title=`Dato de las ${last.fecha_dato.slice(11)} · estación STM10 RiscBal-UIB`;
+    $('stnD').textContent=`${Math.round(last.humedad_aire_pct)} % · ${last.viento_dir} ${Math.round(last.viento_kmh)} km/h, racha ${Math.round(last.racha_kmh)} · lluvia hoy ${f(rain)} mm · hoy ${f(Math.min(...tv))}–${f(Math.max(...tv))} °C`;
+  }catch(e){}
+}
+stnLoad(); setInterval(stnLoad,2*60e3);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) stnLoad(); });
+
 // Autoactualización: si GitHub Pages sirve una versión nueva de esta página, recargar (evita copias en caché en el móvil).
 let pageTag=null;
 async function checkVersion(){ try{ const r=await fetch(location.pathname,{method:'HEAD',cache:'no-store'}); const t=r.headers.get('etag')||r.headers.get('last-modified'); if(!t) return;
