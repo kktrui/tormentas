@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b1220">
+<title>Mancor · estación</title>
+<style>
+:root{--bg:#0b1220;--panel:rgba(13,20,35,.92);--fg:#e8eef8;--muted:#8fa0bd;--line:rgba(255,255,255,.1);--grid:rgba(255,255,255,.07);
+  --s1:#3987e5;--accent:#ffb000;--font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px}
+main{max-width:860px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 14px) 14px 40px}
+header{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+header h1{margin:0;font-size:17px;font-weight:600}
+header a{color:var(--muted);font-size:13px;margin-left:auto;text-decoration:none}
+.sub{color:var(--muted);font-size:13px;margin-top:2px}
+.now{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
+.tile small{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.tile b{display:block;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}
+.tile span{color:var(--muted);font-size:12px}
+.seg{display:flex;gap:6px;margin:4px 0 10px}
+.seg button{flex:1;background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:9px;padding:8px 0;font:inherit;font-size:14px}
+.seg button.on{background:rgba(57,135,229,.18);color:var(--fg);border-color:rgba(57,135,229,.6)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 10px 4px;margin-bottom:10px;position:relative}
+.card h2{margin:0 0 2px 4px;font-size:14px;font-weight:600}
+.card h2 span{color:var(--muted);font-weight:400}
+svg{display:block;width:100%;height:auto;touch-action:pan-y}
+svg text{fill:var(--muted);font-size:11px;font-family:var(--font)}
+svg .lab{fill:var(--fg);font-weight:600}
+.tip{position:absolute;pointer-events:none;background:#16213a;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:12px;
+  white-space:nowrap;display:none;font-variant-numeric:tabular-nums;z-index:2}
+.tip b{color:var(--fg)}
+footer{color:var(--muted);font-size:11.5px;line-height:1.5;margin-top:14px}
+footer a{color:var(--muted)}
+details{margin-top:8px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+td,th{padding:3px 6px;text-align:right;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:500}
+td:first-child,th:first-child{text-align:left}
+@media (max-width:520px){.now{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<main>
+<header><h1>Mancor · Santa Llucia</h1><a href="./">← Tormentas</a></header>
+<div class="sub" id="sub">Cargando…</div>
+<div class="now" id="now"></div>
+<div class="seg" id="seg">
+  <button data-r="24">24 h</button><button data-r="168">7 días</button><button data-r="720">30 días</button><button data-r="0">Todo</button>
+</div>
+<div id="charts"></div>
+<details><summary class="sub">Tabla de datos (últimas 24 h, cada hora)</summary><table id="tbl"></table></details>
+<footer>
+Datos: estación STM10 de <a href="https://geoserver.riscbal.uib.cat/shiny/app_direct/visor_dades/">RiscBal-Control (UIB)</a>,
+licencia <a href="http://creativecommons.org/licenses/by-nc-nd/4.0/">CC BY-NC-ND 4.0</a>. Datos pendientes de validar.
+Registro propio cada 10 min desde el 9-nov-2026; los huecos son periodos sin dato publicado.
+</footer>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const fmt=(v,d=1)=>v==null||isNaN(v)?'—':v.toFixed(d).replace('.',',');
+const hhmm=d=>d.toTimeString().slice(0,5);
+const dmy=d=>`${d.getDate()}/${d.getMonth()+1}`;
+let ROWS=[], RANGE=+(localStorage.mancorRange||24);
+
+async function load(){
+  const txt=await (await fetch('mancor/STM10.csv?'+Date.now())).text();
+  const [head,...lines]=txt.trim().split('\n'); const H=head.split(',');
+  ROWS=lines.map(l=>{const c=l.split(','),o={};H.forEach((h,i)=>o[h]=c[i]);
+    return {t:new Date(o.fecha_dato.replace(' ','T')),temp:+o.temp_aire_c,hr:+o.humedad_aire_pct,suelo:+o.humedad_suelo_pct,
+      r10:+o.lluvia_10min_mm,viento:+o.viento_kmh,vdir:o.viento_dir,racha:+o.racha_kmh,rdir:o.racha_dir};});
+  render();
+}
+
+function render(){
+  document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',+b.dataset.r===RANGE));
+  if(!ROWS.length) return;
+  const last=ROWS.at(-1), ago=Math.round((Date.now()-last.t)/60000);
+  $('sub').textContent=`Último dato ${dmy(last.t)} ${hhmm(last.t)} · hace ${ago<120?ago+' min':Math.round(ago/60)+' h'}${ago>60?' · ⚠ retraso':''}`;
+  const today=ROWS.filter(r=>r.t.toDateString()===last.t.toDateString());
+  const tmax=Math.max(...today.map(r=>r.temp)), tmin=Math.min(...today.map(r=>r.temp));
+  const rainToday=today.reduce((s,r)=>s+(r.r10||0),0);
+  $('now').innerHTML=
+    tile('Temperatura',fmt(last.temp)+' °C',`hoy ${fmt(tmin)} / ${fmt(tmax)}`)+
+    tile('Humedad',Math.round(last.hr)+' %',`suelo ${Math.round(last.suelo)} %`)+
+    tile('Viento',Math.round(last.viento)+' km/h',`${last.vdir} · racha ${Math.round(last.racha)}`)+
+    tile('Lluvia hoy',fmt(rainToday)+' mm',`10 min: ${fmt(last.r10)} mm`);
+  const from=RANGE?last.t-RANGE*3600e3:-Infinity;
+  const rows=ROWS.filter(r=>r.t>=from);
+  const t0=Math.max(+rows[0].t,from), t1=+last.t;
+  W=Math.max(300,Math.round($('charts').clientWidth-22)); Hc=W<500?170:200;
+  const rainStep=RANGE===24?3600e3:RANGE===168?3*3600e3:86400e3;
+  $('charts').innerHTML='';
+  lineChart('Temperatura','°C',rows,r=>r.temp,t0,t1,1,true);
+  barChart('Lluvia',rainStep===3600e3?'mm por hora':rainStep<86400e3?'mm cada 3 h':'mm por día',bucketRain(rows,rainStep,t0),t0,t1,rainStep);
+  lineChart('Humedad del aire','%',rows,r=>r.hr,t0,t1,0,false,[0,100]);
+  lineChart('Racha de viento','km/h',rows,r=>r.racha,t0,t1,0,false,null,true);
+  table();
+}
+const tile=(k,v,s)=>`<div class="tile"><small>${k}</small><b>${v}</b><span>${s}</span></div>`;
+
+function bucketRain(rows,step,t0){
+  const m=new Map();
+  for(const r of rows){ let k;
+    if(step>=86400e3){const d=new Date(r.t);d.setHours(0,0,0,0);k=+d;}
+    else{const d=new Date(r.t-1);d.setMinutes(0,0,0);d.setHours(d.getHours()-d.getHours()%(step/3600e3));k=+d;}
+    m.set(k,(m.get(k)||0)+(r.r10||0)); }
+  return [...m].map(([k,v])=>({t:k,v}));
+}
+
+let W=820,Hc=190;const L=34,R=10,T=14,B=24;
+function frame(title,unit){
+  const c=document.createElement('div'); c.className='card';
+  c.innerHTML=`<h2>${title} <span>${unit}</span></h2><div class="tip"></div>`;
+  $('charts').append(c); return c;
+}
+function xTicks(t0,t1,X){
+  const span=t1-t0, step=span<=36*3600e3?3*3600e3:span<=8*86400e3?86400e3:span<=40*86400e3?7*86400e3:30*86400e3;
+  let s='', d=new Date(t0); d.setMinutes(0,0,0);
+  if(step>=86400e3) d.setHours(0); else d.setHours(Math.ceil(d.getHours()/3)*3);
+  for(let t=+d;t<=t1;t+=step){ if(t<t0) continue; const dd=new Date(t);
+    s+=`<line x1="${X(t)}" x2="${X(t)}" y1="${Hc-B}" y2="${Hc-B+4}" stroke="rgba(255,255,255,.25)"/><text x="${X(t)}" y="${Hc-8}" text-anchor="middle">${step<86400e3?String(dd.getHours()).padStart(2,'0')+' h':dmy(dd)}</text>`; }
+  return s;
+}
+function yAxis(lo,hi,Y,dec){
+  const span=hi-lo, raw=span/4, mag=10**Math.floor(Math.log10(raw)), st=[1,2,2.5,5,10].map(x=>x*mag).find(x=>x>=raw);
+  let s=''; for(let v=Math.ceil(lo/st)*st; v<=hi+1e-9; v+=st)
+    s+=`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/><text x="${L-6}" y="${Y(v)+4}" text-anchor="end">${fmt(v,st<1?1:0)}</text>`;
+  return s;
+}
+function lineChart(title,unit,rows,f,t0,t1,dec,marks,fixed,zero){
+  const c=frame(title,unit); const pts=rows.map(r=>({t:+r.t,v:f(r)})).filter(p=>!isNaN(p.v));
+  if(!pts.length){c.insertAdjacentHTML('beforeend','<div class="sub">Sin datos</div>');return;}
+  let lo=Math.min(...pts.map(p=>p.v)), hi=Math.max(...pts.map(p=>p.v));
+  if(fixed){lo=fixed[0];hi=fixed[1];} else {const pad=Math.max((hi-lo)*.12,.5); lo=zero?0:Math.floor(lo-pad); hi=Math.ceil(hi+pad);}
+  const X=t=>L+(t-t0)/(t1-t0||1)*(W-L-R), Y=v=>T+(hi-v)/(hi-lo||1)*(Hc-T-B);
+  let d='', gaps=''; pts.forEach((p,i)=>{ const brk=i&&p.t-pts[i-1].t>20*60e3;
+    if(brk) gaps+=`<rect x="${X(pts[i-1].t)}" y="${T}" width="${X(p.t)-X(pts[i-1].t)}" height="${Hc-T-B}" fill="rgba(255,255,255,.035)"/>`;
+    d+=`${!i||brk?'M':'L'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`; });
+  let lab='';
+  if(marks){ const mn=pts.reduce((a,b)=>b.v<a.v?b:a), mx=pts.reduce((a,b)=>b.v>a.v?b:a);
+    const anc=p=>X(p.t)>W-120?'end':X(p.t)<L+80?'start':'middle';
+    lab=`<circle cx="${X(mx.t)}" cy="${Y(mx.v)}" r="4" fill="var(--s1)" stroke="var(--bg)" stroke-width="2"/><text class="lab" x="${X(mx.t)}" y="${Y(mx.v)-9}" text-anchor="${anc(mx)}">máx ${fmt(mx.v,dec)}</text>
+         <circle cx="${X(mn.t)}" cy="${Y(mn.v)}" r="4" fill="var(--s1)" stroke="var(--bg)" stroke-width="2"/><text class="lab" x="${X(mn.t)}" y="${Y(mn.v)+19}" text-anchor="${anc(mn)}">mín ${fmt(mn.v,dec)}</text>`; }
+  c.insertAdjacentHTML('beforeend',`<svg viewBox="0 0 ${W} ${Hc}">${gaps}${yAxis(lo,hi,Y,dec)}${xTicks(t0,t1,X)}
+    <line x1="${L}" x2="${W-R}" y1="${Hc-B}" y2="${Hc-B}" stroke="rgba(255,255,255,.25)"/>
+    <path d="${d}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${lab}
+    <line class="xh" y1="${T}" y2="${Hc-B}" stroke="rgba(255,255,255,.4)" stroke-dasharray="3 3" style="display:none"/>
+    <circle class="hp" r="4.5" fill="var(--s1)" stroke="var(--fg)" stroke-width="1.5" style="display:none"/>
+    <rect x="${L}" y="0" width="${W-L-R}" height="${Hc}" fill="transparent"/></svg>`);
+  hover(c,pts,X,Y,p=>`${dmy(new Date(p.t))} ${hhmm(new Date(p.t))} · <b>${fmt(p.v,dec)} ${unit}</b>`);
+}
+function barChart(title,unit,bk,t0,t1,step){
+  const c=frame(title,unit);
+  const hi=Math.max(2,...bk.map(b=>b.v))*1.15, lo=0;
+  const X=t=>L+(t-t0)/(t1-t0||1)*(W-L-R), Y=v=>T+(hi-v)/(hi-lo)*(Hc-T-B);
+  const bw=Math.max(2,(X(t0+step)-X(t0))-2);
+  const total=bk.reduce((s,b)=>s+b.v,0);
+  let bars=''; for(const b of bk){ if(b.v<=0) continue; const x=X(b.t), y=Y(b.v), h=Hc-B-y;
+    bars+=`<path d="M${x+1},${Hc-B}V${y+Math.min(4,h)}q0,-${Math.min(4,h)} ${Math.min(4,bw/2)},-${Math.min(4,h)}H${x+bw-Math.min(4,bw/2)}q${Math.min(4,bw/2)},0 ${Math.min(4,bw/2)},${Math.min(4,h)}V${Hc-B}Z" fill="var(--s1)"/>`; }
+  c.querySelector('h2').insertAdjacentHTML('beforeend',` <span>· total ${fmt(total)} mm</span>`);
+  c.insertAdjacentHTML('beforeend',`<svg viewBox="0 0 ${W} ${Hc}">${yAxis(lo,hi,Y,1)}${xTicks(t0,t1,X)}
+    <line x1="${L}" x2="${W-R}" y1="${Hc-B}" y2="${Hc-B}" stroke="rgba(255,255,255,.25)"/>${bars}
+    ${total===0?`<text x="${(L+W-R)/2}" y="${(T+Hc-B)/2}" text-anchor="middle">Sin lluvia en este periodo</text>`:''}
+    <line class="xh" y1="${T}" y2="${Hc-B}" stroke="rgba(255,255,255,.4)" stroke-dasharray="3 3" style="display:none"/>
+    <circle class="hp" r="0" style="display:none"/><rect x="${L}" y="0" width="${W-L-R}" height="${Hc}" fill="transparent"/></svg>`);
+  const lab=b=>{const d=new Date(b.t); return step>=86400e3?dmy(d):`${dmy(d)} ${hhmm(d)}–${hhmm(new Date(b.t+step))}`;};
+  hover(c,bk.map(b=>({t:b.t+step/2,v:b.v,raw:b})),X,Y,p=>`${lab(p.raw)} · <b>${fmt(p.v)} mm</b>`);
+}
+function hover(c,pts,X,Y,txt){
+  const svg=c.querySelector('svg'), tip=c.querySelector('.tip'), xh=svg.querySelector('.xh'), hp=svg.querySelector('.hp');
+  const move=e=>{ const r=svg.getBoundingClientRect(), cx=(e.touches?e.touches[0].clientX:e.clientX), sx=(cx-r.left)/r.width*W;
+    let best=null,bd=Infinity; for(const p of pts){const d=Math.abs(X(p.t)-sx); if(d<bd){bd=d;best=p;}}
+    if(!best) return; const px=X(best.t);
+    xh.setAttribute('x1',px);xh.setAttribute('x2',px);xh.style.display='';
+    hp.setAttribute('cx',px);hp.setAttribute('cy',Y(best.v));hp.style.display='';
+    tip.innerHTML=txt(best); tip.style.display='block';
+    const left=px/W*r.width+10; tip.style.left=Math.min(left,c.clientWidth-tip.offsetWidth-6)+'px'; tip.style.top='26px'; };
+  const out=()=>{xh.style.display='none';hp.style.display='none';tip.style.display='none';};
+  svg.addEventListener('pointermove',move); svg.addEventListener('touchmove',move,{passive:true});
+  svg.addEventListener('pointerleave',out); svg.addEventListener('touchend',()=>setTimeout(out,1500));
+}
+function table(){
+  const last=ROWS.at(-1).t, rows=ROWS.filter(r=>r.t>=last-24*3600e3 && r.t.getMinutes()===0).reverse();
+  $('tbl').innerHTML='<tr><th>Hora</th><th>°C</th><th>HR %</th><th>Lluvia 1 h</th><th>Viento</th><th>Racha</th></tr>'+
+    rows.map(r=>{const h=ROWS.filter(x=>x.t>r.t-3600e3&&x.t<=r.t).reduce((s,x)=>s+(x.r10||0),0);
+      return `<tr><td>${dmy(r.t)} ${hhmm(r.t)}</td><td>${fmt(r.temp)}</td><td>${Math.round(r.hr)}</td><td>${fmt(h)}</td><td>${Math.round(r.viento)} ${r.vdir}</td><td>${Math.round(r.racha)}</td></tr>`;}).join('');
+}
+$('seg').addEventListener('click',e=>{const b=e.target.closest('button'); if(!b) return; RANGE=+b.dataset.r; localStorage.mancorRange=RANGE; render();});
+load(); setInterval(load,5*60e3);
+let rz; addEventListener('resize',()=>{clearTimeout(rz);rz=setTimeout(render,200);});
+</script>
+</body>
+</html>
