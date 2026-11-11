@@ -5,8 +5,12 @@ a tu posición. Una sola página HTML, sin servidor ni claves.
 
 - Radar: RainViewer (fotogramas cada 10 min, últimas 2 h). Teselas gratuitas hasta zoom 7.
 - Mapa base: Esri World Dark Gray.
-- Rumbo: correlación entre los últimos 5 fotogramas en una ventana de ~950 km alrededor de la posición.
-- ETA: extrapolación lineal del último fotograma a lo largo del vector; umbrales 15/35/45 dBZ aproximados.
+- Intensidad: dBZ exactos (formato en bruto de RainViewer, que además da la cobertura real del radar; si falla, paleta 2 descodificada). Umbrales 20/40/50 dBZ.
+- Rumbo: correlación entre fotogramas separados 20 y 30 min (últimos 7), afinada a décimas de píxel, en una ventana de ~950 km alrededor de la posición. El desacuerdo entre parejas da la incertidumbre; con menos de 3 parejas coherentes no se da rumbo.
+- ETA: extrapolación del último fotograma con 17 rumbos posibles alrededor del medido. Te alcanza en ≥60 % → aviso firme; 20-60 % → «puede llover» (y «?» en las casillas); el margen de hora sale de esos mismos rumbos. No se extrapola más allá de la cobertura del radar.
+- Célula principal: rumbo propio por correlación centrada en ella (σ 90 km) y cono de incertidumbre (≈ la mitad de los casos medidos a 20-30 min).
+- Fiabilidad: parecido entre fotogramas a 30 min una vez desplazados (alta ≥ 0,7).
+- Constantes ajustadas con radar real archivado (9 zonas, una mañana de nov-2026): sirve hasta ~60 min; la lluvia fuerte a más de 30 min es poco predecible con cualquier método.
 - Rayos: flujo en tiempo real de Blitzortung.org (protocolo no oficial; cruces que se desvanecen en 30 min).
 - Células eléctricas: agrupación de los rayos de los últimos 15 min, ritmo, tendencia, rumbo y ETA (el rumbo necesita unos 8 min de página abierta).
 - Sparkline: intensidad máxima sobre la posición en cada fotograma de las últimas 2 h.
