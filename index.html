@@ -96,6 +96,17 @@ body.mesa .stn b{font-size:34px}body.mesa .stn .sd{font-size:15px}
 .chart svg{display:block;width:100%;height:44px;margin-top:4px}
 .chart .cap{font-size:12px;color:var(--fg);margin-top:3px;line-height:1.25}
 .chart .cap.risk{color:var(--warn)}
+.pbox{border:1px solid var(--line);border-radius:10px;padding:6px 8px}
+.pbox small{display:block;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbars{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:2px;margin-top:4px}
+.pbars div{text-align:center;min-width:0}
+.pbars b{display:block;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.pbars b.lo{color:var(--muted);font-weight:500}
+.pbars i{display:block;height:24px;position:relative;border-bottom:1px solid var(--line)}
+.pbars i u{position:absolute;left:2px;right:2px;bottom:0;border-radius:4px 4px 0 0;min-height:2px}
+.pbars span{display:block;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:2px}
+.pbox .cap{font-size:12px;color:var(--fg);margin-top:3px;line-height:1.25}
+body.fc .pbox{display:none}
 #mesaExit{display:none;position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px));z-index:1100;flex:none}
 body.mesa #mesaExit{display:block}
 body.mesa .btns,body.mesa .row,body.mesa .legend,body.mesa .leaflet-control-zoom,body.mesa header{display:none}
@@ -154,6 +165,7 @@ body.mesa #sheet{gap:14px}
     <div class="cell"><small>Muy fuerte</small><b id="eSevere">—</b></div>
     <div class="cell"><small>Rumbo · km/h</small><b id="eDir">—</b></div>
   </div>
+  <div class="pbox" id="pbox" hidden><small>Probabilidad de lluvia · 3 h · radar + modelos</small><div class="pbars" id="pbars"></div><div class="cap" id="pcap">—</div></div>
   <a class="stn" id="stn" href="mancor.html" hidden><div><b id="stnT">—</b></div><div class="si"><small><i class="lv"></i><span id="stnHead">Mancor · en directo</span></small><div class="sd" id="stnD">—</div></div><span class="chev">›</span></a>
   <div class="models" id="modelsBox"><small>Lluvia prevista por modelo · próximas 24 h</small><table class="mtab" id="mtab"></table><div class="mkey"><span><b style="background:rgb(90,160,240)"></b>lluvia ≥0,5 mm/h, cuenta en Acuerdo (colores como el mapa)</span><span><i class="drz" style="display:inline-block;width:4px;height:4px;border-radius:50%;background:#9fd3f5;margin-right:4px"></i>llovizna, no cuenta</span></div><div class="mcap" id="mcap">Cargando modelos…</div></div>
   <div class="row" id="fcrow">
@@ -463,10 +475,13 @@ async function analyze(){
     const F=fields[fields.length-1];
     let rainPx=0; for(let i=0;i<F.length;i++) if(F[i]>=CFG.thr.light) rainPx++;
     const pyr=fields.map(pyramid), times=past.map(f=>f.time);
-    const v = rainPx>=CFG.minRainPx ? motionAt(pyr,times,g,g.px,g.py,CFG.sigmaKm,CFG.minPairs) : null;
+    let v = rainPx>=CFG.minRainPx ? motionAt(pyr,times,g,g.px,g.py,CFG.sigmaKm,CFG.minPairs) : null, vSrc='radar';
     const latest=past[past.length-1];
+    // Viento a 700 hPa de los modelos: rumbo de reserva cuando hay lluvia pero el radar no da un vector (abanico ancho).
+    const wv=windVec(latest.time,g);
+    if(!v && wv && rainPx>=CFG.minRainPx && wv.px>=MIX.windMinPx){ v={ dx:wv.dx, dy:wv.dy, spread:Math.max(MIX.windSigPx,MIX.windSigRel*wv.px)/CFG.fanMul, score:0, pairs:0, c30:0 }; vSrc='viento'; }
     const ageMin=Math.max(0,(Date.now()/1000-latest.time)/60);
-    const res={ g, F, v, rainPx, ageMin, frameTime:latest.time, computedAt:Date.now() };
+    const res={ g, F, v, vSrc, wind:wv, rainPx, ageMin, frameTime:latest.time, computedAt:Date.now() };
     let nearPx=0; { const R2=(CFG.nearKm/g.kmPerPx)**2; for(let y=0;y<W;y+=2)for(let x=0;x<W;x+=2){ if(F[y*W+x]>=CFG.thr.light && (x-g.px)**2+(y-g.py)**2<=R2) nearPx++; } }
     res.nearPx=nearPx*4;
     const disc=discOffsets(Math.max(2,Math.round(CFG.radiusKm/g.kmPerPx)));
@@ -504,7 +519,13 @@ async function analyze(){
       // Fiabilidad: parecido entre fotogramas a 30 min una vez desplazados, parejas coherentes y acuerdo entre ellas.
       const rel=v.spread/Math.max(1,Math.hypot(v.dx,v.dy));
       res.conf = (v.c30>=0.7 && rel<=0.3) ? 'alta' : (v.c30>=0.5) ? 'media' : 'baja';
+      // Comprobación con el viento en altura: si el rumbo medido se aparta 30° o más, la fiabilidad baja un escalón.
+      if(vSrc==='viento') res.conf='baja';
+      else if(wv && wv.px>=MIX.windMinPx && Math.hypot(v.dx,v.dy)>=MIX.windMinPx){
+        res.windDiff=Math.abs(Math.atan2(v.dx*wv.dy-v.dy*wv.dx, v.dx*wv.dx+v.dy*wv.dy))*180/Math.PI;
+        if(res.windDiff>=MIX.windDiffDeg) res.conf = res.conf==='alta'?'media':'baja'; }
     }
+    res.blk=radarBlocks(res,disc);
     if(res.cell){ const h5=await Promise.all(past.map((f,i)=>halfFieldFor(f,g,fields[i]))); res.cell.trail=trackBack(h5,past,res.cell,res.cell.vel,g); }
     S.analysis=res; render(res); const cur=S.playList[S.idx]; draw(res, cur?(cur.time-res.frameTime)/60:0);
     if(res.cell){ // estela completa: hasta 2 h atrás (fotogramas antiguos a media resolución, en caché)
@@ -528,34 +549,36 @@ function render(r){
   let head, sub, cls;
   if(r.noCov){ head='Sin cobertura de radar sobre tu posición'; sub='Aquí no llega ningún radar de la red: no se puede saber si llueve ni avisar.'; cls='warn'; }
   else if(r.rainPx<CFG.minRainPx){ head='Sin precipitación relevante en unos 450 km'; sub='El radar no muestra ecos significativos alrededor de tu posición.'; cls='ok'; }
-  else if(r.v && r.far){ head=`Sin lluvia a menos de ${CFG.nearKm} km`; sub=`Hay ecos más lejos (se mueven hacia el ${dirName(r.bearing)} a ${Math.round(r.speedKmh)} km/h) pero con ese rumbo no te alcanzan en ${fmtMin(r.horizon)}.`; cls='ok'; }
+  else if(r.v && r.far){ head=`Sin lluvia a menos de ${CFG.nearKm} km`; sub = r.vSrc==='viento' ? `Hay ecos más lejos; el radar no da su rumbo, pero con el viento a 3000 m (hacia el ${dirName(r.bearing)} a ${Math.round(r.speedKmh)} km/h) no te alcanzan en ${fmtMin(r.horizon)}.` : `Hay ecos más lejos (se mueven hacia el ${dirName(r.bearing)} a ${Math.round(r.speedKmh)} km/h) pero con ese rumbo no te alcanzan en ${fmtMin(r.horizon)}.`; cls='ok'; }
   else if(!r.v){ sub='Los fotogramas no son coherentes entre sí. Mira la animación.';
     if(r.now>=CFG.thr.strong){ head='Lluvia fuerte sobre tu posición ahora'; cls='bad'; sub='No se puede estimar hacia dónde va. '+sub; }
     else if(r.now>=CFG.thr.light){ head='Ya llueve sobre tu posición'; cls='warn'; sub='No se puede estimar hacia dónde va. '+sub; }
     else{ head='Hay lluvia cerca, pero no se puede estimar el rumbo'; cls='warn'; } }
   else{
-    const from=dirName((r.bearing+180)%360), to=dirName(r.bearing), Lt=r.st.light, St=r.st.strong, yes=CFG.probYes, may=CFG.probMaybe;
+    const from=dirName((r.bearing+180)%360), to=dirName(r.bearing), Lt=r.st.light, St=r.st.strong, viento=r.vSrc==='viento', yes=viento?2:CFG.probYes, may=CFG.probMaybe; // con rumbo de reserva nunca se da aviso firme
     const de10=p=>Math.max(1,Math.min(9,Math.round(p*10)));
     const mov = r.speedKmh<6 ? 'Casi estacionaria' : `Viene del ${from} hacia el ${to} a ${Math.round(r.speedKmh)} km/h`;
-    sub=`${mov} · fiabilidad ${r.conf}.`;
+    sub = viento ? `El radar no da un rumbo claro: uso el viento a 3000 m de los modelos (hacia el ${to} a ${Math.round(r.speedKmh)} km/h) · fiabilidad baja.` : `${mov} · fiabilidad ${r.conf}.`;
+    if(r.windDiff>=MIX.windDiffDeg) sub+=` El viento a 3000 m va hacia el ${dirName(r.wind.bearing)}, no coincide con ese rumbo.`;
     const margen=st=>{ if(st.hi-st.lo>=10 && adj(st.hi)>0) sub+=` Según el rumbo exacto, entre ${fmtMin(adj(st.lo))} y ${fmtMin(adj(st.hi))}.`; if(adj(st.t)>60) sub+=' A más de una hora la hora es orientativa.'; };
     if(r.now>=CFG.thr.strong){ head='Lluvia fuerte sobre tu posición ahora'; cls='bad'; }
     else if(r.now>=CFG.thr.light){ head='Ya llueve sobre tu posición'; cls='warn'; if(St.p>=yes) head+=` · fuerte en ${fmtMin(adj(St.t))}`; else if(St.p>=may) head+=' · puede ser fuerte'; }
     else if(Lt.p>=yes && St.p>=yes){ head=`Lluvia fuerte en ${fmtMin(adj(St.t))}`; cls=adj(St.t)<30?'bad':'warn'; margen(St); }
     else if(Lt.p>=yes){ head=`Lluvia en ${fmtMin(adj(Lt.t))}`+(St.p>=may?', puede ser fuerte':', sin ecos fuertes en tu ruta'); cls='warn'; margen(Lt); }
     else if(Lt.p>=may){ head=`Puede llover en unos ${fmtMin(adj(Lt.t))}: pasa cerca`; cls='warn'; sub+=` Te alcanza en ${de10(Lt.p)} de cada 10 rumbos posibles.`; if(St.p>=may) sub+=' Lleva ecos fuertes.'; }
-    else{ head=`Con el rumbo actual no te afecta en ${fmtMin(adj(r.horizon))}`; cls='ok'; if(r.horizon<CFG.horizonMin-20) sub+=' (límite de la cobertura del radar).'; if(r.cell){ const cv=r.cell.vel; sub+=` Célula principal a ${Math.round(r.cell.distKm)} km, ${cv.kmh<3?'casi parada':`va hacia el ${dirName(cv.bearing)} a ${Math.round(cv.kmh)} km/h`}.`; } }
+    else{ head=`Con ${viento?'ese viento':'el rumbo actual'} no te afecta en ${fmtMin(adj(r.horizon))}`; cls='ok'; if(r.horizon<CFG.horizonMin-20) sub+=' (límite de la cobertura del radar).'; if(r.cell){ const cv=r.cell.vel; sub+=` Célula principal a ${Math.round(r.cell.distKm)} km`+(viento&&cv.src!=='célula'?'.':`, ${cv.kmh<3?'casi parada':`va hacia el ${dirName(cv.bearing)} a ${Math.round(cv.kmh)} km/h`}.`); } }
     if(r.cell && r.cell.maxDbz>=CFG.hailDbz) sub+=` Ecos de ${Math.round(r.cell.maxDbz)} dBZ en la célula: posible granizo.`;
     if(r.endLight!=null && Lt.p>=yes) sub+=r.endOpen?` Lluvia durante más de ${fmtMin(r.endLight-r.startLight)}.`:` Duración estimada ${fmtMin(r.endLight-r.startLight)}.`;
-    if(r.conf==='baja') sub+=' Tormentas de formación local: fíate más de la animación que del número.';
+    if(r.conf==='baja' && !viento) sub+=' Tormentas de formación local: fíate más de la animación que del número.';
   }
   $('headline').textContent=head; $('sub').textContent=sub; $('dot').className='dot '+cls;
   if(typeof boltRender==='function') boltRender(true);
-  const celda=st=>st.p<CFG.probMaybe?'—':fmtMin(adj(st.t))+(st.p>=CFG.probYes?'':' ?'); // «?» = solo en parte de los rumbos posibles
+  const celda=st=>st.p<CFG.probMaybe?'—':fmtMin(adj(st.t))+(st.p>=CFG.probYes&&r.vSrc!=='viento'?'':' ?'); // «?» = solo en parte de los rumbos posibles
   $('eLight').textContent = r.v&&!r.noCov?celda(r.st.light):'—';
   $('eStrong').textContent = r.v&&!r.noCov?celda(r.st.strong):'—';
   $('eSevere').textContent = r.v&&!r.noCov?celda(r.st.severe):'—';
-  $('eDir').textContent = r.v&&!r.noCov?(r.speedKmh<6?'estac.':`${dirName(r.bearing)} ${Math.round(r.speedKmh)}`):'—';
+  $('eDir').textContent = r.v&&!r.noCov?(r.speedKmh<6?'estac.':`${r.vSrc==='viento'?'≈':''}${dirName(r.bearing)} ${Math.round(r.speedKmh)}`):'—';
+  renderMix();
 }
 function draw(r, dtMin){
   // dtMin: minutos del fotograma mostrado respecto al analizado (negativo en fotogramas antiguos).
@@ -625,14 +648,92 @@ function renderSpark(r){
   $('sparkcap').textContent=txt;
 }
 
+// ---------- Viento en altura y probabilidad mezclada (radar + modelos) ----------
+// Medido con radar archivado (9 zonas, nov-2026): el viento medio de los modelos a 700 hPa da el rumbo de la lluvia con
+// unos 7° y 14 km/h de error; mezclar el abanico del radar con los modelos mejora la probabilidad a cualquier plazo.
+const MIX={
+  blocks:[[0,30],[30,60],[60,90],[90,120],[120,150],[150,180]],
+  wRadar:[0.75,0.75,0.75,0.75,0.6,0.6],  // peso del radar en cada tramo (el resto, modelos)
+  wWeak:0.5,                              // factor del peso si el rumbo es de reserva (viento) o no hay rumbo
+  mmMin:0.1,                              // un modelo "da lluvia" en el tramo con al menos esto en alguna hora que lo solape
+  cuts:[0.001,0.25,0.45,0.65,0.85],       // fracción de modelos con lluvia -> frecuencia real observada
+  calib:[0.05,0.15,0.44,0.59,0.62,0.84],
+  windMinPx:1.5, windSigPx:1.5, windSigRel:0.6, windDiffDeg:30,
+};
+const WMODELS=['ecmwf_ifs025','icon_eu','gfs_seamless','meteofrance_arome_france','ukmo_seamless']; // AROME HD no da niveles de presión
+// Open-Meteo corta de vez en cuando la conexión: tiempo máximo de 12 s y hasta tres intentos.
+async function omFetch(url){
+  for(let k=0;;k++){ const ac=new AbortController(), to=setTimeout(()=>ac.abort(),12e3);
+    try{ const r=await fetch(url,{signal:ac.signal}); if(!r.ok) throw new Error('Open-Meteo '+r.status); return await r.json(); }
+    catch(e){ if(k>=2) throw e; await new Promise(f=>setTimeout(f,1500)); } finally{ clearTimeout(to); } }
+}
+async function loadWind(force){
+  const key=`${S.pos.lat.toFixed(2)},${S.pos.lng.toFixed(2)}`;
+  if(!force && S.windKey===key && Date.now()-(S.windAt||0)<30*60e3) return;
+  try{
+    const h=(await omFetch(`https://api.open-meteo.com/v1/forecast?latitude=${S.pos.lat.toFixed(3)}&longitude=${S.pos.lng.toFixed(3)}&hourly=wind_speed_700hPa,wind_direction_700hPa&past_hours=2&forecast_hours=4&models=${WMODELS.join(',')}&timeformat=unixtime`)).hourly, e=[], s=[];
+    h.time.forEach((t,i)=>{ let se=0, ss=0, n=0;
+      for(const m of WMODELS){ const sp=(h['wind_speed_700hPa_'+m]||[])[i], d=(h['wind_direction_700hPa_'+m]||[])[i]; if(sp==null||d==null) continue; se-=sp*Math.sin(d*Math.PI/180); ss+=sp*Math.cos(d*Math.PI/180); n++; }
+      e.push(n?se/n:null); s.push(n?ss/n:null); });
+    const first=!S.wind || S.windKey!==key; S.wind={ t:h.time, e, s }; S.windKey=key; S.windAt=Date.now();
+    if(first && S.analysis) analyze(); // el primer análisis suele llegar antes que el viento
+  }catch(e){ console.error(e); }
+}
+// Viento (media de modelos) a la hora más cercana, como desplazamiento en px por 10 min. La dirección es de dónde viene.
+function windVec(tSec,g){
+  const w=S.wind; if(!w || S.windKey!==`${S.pos.lat.toFixed(2)},${S.pos.lng.toFixed(2)}`) return null; let k=-1;
+  for(let i=0;i<w.t.length;i++) if(w.e[i]!=null && (k<0 || Math.abs(w.t[i]-tSec)<Math.abs(w.t[k]-tSec))) k=i;
+  if(k<0 || Math.abs(w.t[k]-tSec)>5400) return null;
+  const dx=w.e[k]/6/g.kmPerPx, dy=w.s[k]/6/g.kmPerPx;
+  return { dx, dy, px:Math.hypot(dx,dy), kmh:Math.hypot(w.e[k],w.s[k]), bearing:(Math.atan2(dx,-dy)*180/Math.PI+360)%360 };
+}
+// Probabilidad de lluvia (≥20 dBZ a menos de 10 km) en cada tramo según el abanico del radar. ok=false: fuera de cobertura.
+function radarBlocks(res,disc){
+  if(res.noCov) return null;
+  const g=res.g, F=res.F, v=res.v, a0=Math.round(res.ageMin);
+  if(res.rainPx<CFG.minRainPx) return MIX.blocks.map(()=>({ p:0, ok:true }));
+  if(!v) return MIX.blocks.map(()=>({ p:res.now>=CFG.thr.light?1:0, ok:true, weak:true }));
+  const ms=fan(v), weak=res.vSrc==='viento';
+  return MIX.blocks.map(([a,b])=>{
+    if(Number.isNaN(maxIn(F,W,g.px-v.dx*(a0+a+1)/10,g.py-v.dy*(a0+a+1)/10,disc,F.cov))) return { p:0, ok:false };
+    let p=0; for(const m of ms) for(let t=a0+a+1;t<=a0+b;t++) if(maxIn(F,W,g.px-m.dx*t/10,g.py-m.dy*t/10,disc)>=CFG.thr.light){ p+=m.w; break; }
+    return { p, ok:true, weak }; });
+}
+// Lo mismo según los modelos: cuántos dan lluvia en alguna hora que solape el tramo, pasado a frecuencia real.
+function modelBlocks(t0){
+  const h=S.models; if(!h||!h.time||S.modelsOff==null) return null;
+  const ts=h.time.map(t=>Date.parse(t+':00Z')/1000-S.modelsOff);
+  return MIX.blocks.map(([a,b])=>{ const A=t0+a*60, B=t0+b*60; let n=0, si=0;
+    for(const [id] of MODELS){ const pr=h['precipitation_'+id]||[]; let mx=null;
+      for(let i=0;i<ts.length;i++) if(ts[i]-3600<B && ts[i]>A && pr[i]!=null) mx=Math.max(mx??0,pr[i]);
+      if(mx!=null){ n++; if(mx>=MIX.mmMin) si++; } }
+    if(!n) return null; const f=si/n; return { p:MIX.calib[MIX.cuts.filter(c=>f>=c).length], si, n }; });
+}
+function renderMix(){
+  const r=S.analysis, box=$('pbox'); if(!r){ box.hidden=true; return; }
+  const t0=r.computedAt/1000, R=r.blk, M=modelBlocks(t0); if(!R && !M){ box.hidden=true; return; }
+  let html='', best=0, bp=-1, maxSi=0, nM=0; const pct=p=>Math.round(p*100);
+  MIX.blocks.forEach(([a,b],i)=>{
+    const rb=R&&R[i].ok?R[i]:null, mb=M&&M[i]; if(mb){ maxSi=Math.max(maxSi,mb.si); nM=Math.max(nM,mb.n); }
+    const w = rb&&mb ? MIX.wRadar[i]*(rb.weak?MIX.wWeak:1) : rb?1:0, p = rb||mb ? w*(rb?rb.p:0)+(1-w)*(mb?mb.p:0) : null;
+    if(p!=null && p>bp){ bp=p; best=i; }
+    const col = p==null?'transparent':p>=CFG.probYes?'#8fdcff':p>=CFG.probMaybe?'#36a9e1':'#44536e';
+    const tip=`${hhmm(t0+a*60)}–${hhmm(t0+b*60)}: radar ${rb?pct(rb.p)+' %':'sin dato'} · modelos ${mb?`${mb.si} de ${mb.n} (${pct(mb.p)} %)`:'sin dato'}`;
+    html+=`<div title="${tip}"><b${p==null||p<CFG.probMaybe?' class="lo"':''}>${p==null?'—':pct(p)+' %'}</b><i><u style="height:${p==null?0:Math.max(4,pct(p))}%;background:${col}"></u></i><span>${hhmm(t0+a*60)}</span></div>`; });
+  $('pbars').innerHTML=html; box.hidden=false;
+  const [a,b]=MIX.blocks[best];
+  let t = bp<CFG.probMaybe ? `Lluvia poco probable en 3 h (máx ${pct(bp)} %)` : `${bp>=CFG.probYes?'Lluvia probable':'Puede llover'} entre las ${hhmm(t0+a*60)} y las ${hhmm(t0+b*60)} (${pct(bp)} %)`;
+  t += !M ? ' · solo radar' : !R ? ` · solo modelos: ${maxSi} de ${nM} dan lluvia` : ` · modelos: ${maxSi} de ${nM} dan lluvia`;
+  $('pcap').textContent=t;
+}
+
 // ---------- Próximas 12 h (Open-Meteo, gratis y sin clave) ----------
 async function loadOutlook(force){
   const key=`${S.pos.lat.toFixed(2)},${S.pos.lng.toFixed(2)}`;
   if(!force && S.outlookKey===key && S.outlookAt && Date.now()-S.outlookAt<30*60e3) return;
   try{
-    const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${S.pos.lat.toFixed(3)}&longitude=${S.pos.lng.toFixed(3)}&hourly=precipitation_probability,precipitation,cape,weather_code&forecast_hours=12&timezone=auto`);
-    if(!r.ok) throw new Error('Open-Meteo '+r.status);
-    const j=await r.json(); S.outlook=j.hourly; S.outlookKey=key; S.outlookAt=Date.now(); renderOutlook();
+    const j=await omFetch(`https://api.open-meteo.com/v1/forecast?latitude=${S.pos.lat.toFixed(3)}&longitude=${S.pos.lng.toFixed(3)}&hourly=precipitation_probability,precipitation,cape,weather_code&forecast_hours=12&timezone=auto`);
+    S.outlook=j.hourly; S.outlookKey=key; S.outlookAt=Date.now(); renderOutlook();
   }catch(e){ console.error(e); $('omtext').textContent='Previsión no disponible'; }
 }
 function renderOutlook(){
@@ -685,6 +786,7 @@ try{ if(localStorage.getItem('tormentas.sat')==='1') satToggle(true); }catch(e){
 $('share').onclick=async()=>{
   const lines=[$('headline').textContent, $('sub').textContent];
   if($('boltline').classList.contains('on')) lines.push('⚡ '+$('boltline').innerText.replace(/\s+/g,' ').trim());
+  if(!$('pbox').hidden) lines.push('Próximas 3 h: '+$('pcap').textContent);
   if(S.outlook) lines.push('Próximas 12 h: '+$('omtext').textContent);
   lines.push(location.href.split('#')[0]);
   const text=lines.join('\n');
@@ -810,9 +912,8 @@ async function loadModels(force){
   const key=`${S.pos.lat.toFixed(2)},${S.pos.lng.toFixed(2)}`;
   if(!force && S.modelsKey===key && Date.now()-(S.modelsAt||0)<30*60e3) return;
   try{
-    const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${S.pos.lat.toFixed(3)}&longitude=${S.pos.lng.toFixed(3)}&hourly=precipitation,weather_code,cape&forecast_hours=24&models=${MODELS.map(m=>m[0]).join(',')}&timezone=auto`);
-    if(!r.ok) throw new Error('Open-Meteo '+r.status);
-    S.models=(await r.json()).hourly; S.modelsKey=key; S.modelsAt=Date.now(); renderModels();
+    const j=await omFetch(`https://api.open-meteo.com/v1/forecast?latitude=${S.pos.lat.toFixed(3)}&longitude=${S.pos.lng.toFixed(3)}&hourly=precipitation,weather_code,cape&forecast_hours=24&models=${MODELS.map(m=>m[0]).join(',')}&timezone=auto`);
+    S.models=j.hourly; S.modelsOff=j.utc_offset_seconds||0; S.modelsKey=key; S.modelsAt=Date.now(); renderModels(); renderMix();
   }catch(e){ console.error(e); $('mcap').textContent='Modelos no disponibles ahora mismo'; }
 }
 // Misma escala que el mapa de previsión. Por debajo de 0,5 mm/h es llovizna: se dibuja como punto y no cuenta en el acuerdo.
@@ -994,7 +1095,7 @@ async function refresh(force){
   try{
     const before=S.lastGen; await fetchFrames();
     if(force || S.lastGen!==before || !S.playList.length){ rebuildLayers(); if(S.playing){ clearTimeout(S.timer); tick(); } await analyze(); }
-    loadOutlook(false); loadModels(false);
+    loadOutlook(false); loadModels(false); loadWind(false);
   }catch(e){ console.error(e); $('headline').textContent='Sin conexión con el radar'; $('sub').textContent=e.message; }
 }
 setInterval(()=>$('clock').textContent=new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}),1000);
